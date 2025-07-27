@@ -1,0 +1,12 @@
+<resources>
+
+    <color name="colorPrimaryDark">#09ADAD</color> <!-- Dark primary color for the status bar -->
+
+    <color name="colorPrimary">#E90B38</color>
+    <color name="colorBackground">#FFFFFF</color> <!-- Default light background -->
+    <color name="colorOnBackground">#000000</color> <!-- Text color for light background -->
+    <color name="colorBackgroundNight">#000000</color> <!-- Background for dark mode -->
+    <color name="colorOnBackgroundNight">#FFFFFF</color> <!-- Text color for dark background -->
+    <color name="transparent">#00000000</color>
+    <color name="colorAccent">#6617BD</color>
+</resources>
