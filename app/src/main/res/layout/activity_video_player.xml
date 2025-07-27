@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="0dp"
+    android:background="@android:color/black">
+
+    <!-- PlayerView for ExoPlayer -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/player_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:use_controller="true"/>
+
+    <!-- Volume Overlay Container (Top-Center) -->
+    <LinearLayout
+        android:id="@+id/overlay_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="50dp"
+        android:padding="8dp"
+        android:background="@drawable/overlay_background">
+
+        <ImageView
+            android:id="@+id/volume_icon"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/ic_volume" />
+
+        <ProgressBar
+            android:id="@+id/volume_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="50"
+            android:progressTint="@color/colorAccent" />
+    </LinearLayout>
+
+    <!-- Brightness Overlay Container (Below Volume Overlay) -->
+    <LinearLayout
+        android:id="@+id/brightness_overlay_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:layout_below="@id/overlay_container"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="50dp"
+        android:padding="8dp"
+        android:background="@drawable/overlay_background">
+
+        <ImageView
+            android:id="@+id/brightness_icon"
+            android:layout_width="30dp"
+            android:layout_height="26dp"
+            android:src="@drawable/ic_brightness" />
+
+        <ProgressBar
+            android:id="@+id/brightness_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="50"
+            android:progressTint="@color/colorAccent" />
+    </LinearLayout>
+
+    <!-- Icons Layout: Top-Left Corner -->
+    <LinearLayout
+        android:id="@+id/icons_layout"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentStart="true"
+        android:layout_margin="16dp">
+
+        <!-- Rotate Button -->
+        <ImageButton
+            android:id="@+id/btn_rotate"
+            android:layout_width="40dp"
+            android:layout_height="70dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:padding="8.5dp"
+            android:layout_marginStart="10dp"
+            android:src="@drawable/ic_rotate"
+            android:contentDescription="@string/rotate_description"
+            android:scaleType="fitCenter"/>
+
+        <!-- Crop Button -->
+        <ImageButton
+            android:id="@+id/btn_crop"
+            android:layout_width="50dp"
+            android:layout_height= "70dp"
+            android:background="?attr/selectableItemBackground"
+            android:src="@drawable/ic_crop"
+            android:contentDescription="@string/crop_options"
+            android:layout_marginStart="0dp"/>
+
+        <ImageButton
+            android:id="@+id/audio_track"
+            android:layout_width="40dp"
+            android:layout_height= "70dp"
+            android:background="?attr/selectableItemBackground"
+            android:src="@drawable/ic_audio_track"
+            android:contentDescription="@string/audio_track_description"
+            android:layout_marginStart="0dp"/>
+    </LinearLayout>
+
+</RelativeLayout>

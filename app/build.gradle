@@ -1,0 +1,66 @@
+// build.gradle (Module Level)
+
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+android {
+    namespace 'com.example.cinestream'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.example.cinestream"
+        minSdk 24
+        //noinspection EditedTargetSdkVersion
+        targetSdk 35
+        versionCode 82
+        versionName "8.2"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+def media3_version = "1.6.1"
+
+dependencies {
+    // Kotlin Standard Library
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
+    // AndroidX Libraries
+    implementation 'androidx.core:core-ktx:1.9.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.0'  // For RecyclerView
+
+    // Media3 + FFmpeg software decoder (E-AC-3)
+    implementation "androidx.media3:media3-exoplayer:$media3_version"
+    implementation "androidx.media3:media3-exoplayer-hls:$media3_version"
+    implementation "androidx.media3:media3-exoplayer-dash:$media3_version"
+    implementation "androidx.media3:media3-exoplayer-smoothstreaming:$media3_version"
+    implementation "androidx.media3:media3-common:$media3_version"
+    implementation "androidx.media3:media3-ui:$media3_version"
+    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1" // <-- adds E-AC-3
+
+    // Glide
+    implementation 'com.github.bumptech.glide:glide:4.15.1'
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.15.1'
+
+    // Material Design Components
+    implementation 'com.google.android.material:material:1.9.0'
+    implementation libs.activity
+
+    // Test Libraries
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+}

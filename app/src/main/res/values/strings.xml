@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CineStream</string>
+    <string name="add_video">Add Video</string>
+    <string name="rotate_description">Rotate Screen</string>
+    <string name="audio_track_description">Audio Track</string>
+    <string name="process_audio">Process Audio</string>
+    <string name="crop_options">Crop Options</string>
+    <string name="original">Original</string>
+    <string name="fill">Fill</string>
+    <string name="fit">Fit</string>
+    <string name="lock">Lock</string>
+</resources>

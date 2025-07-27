@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:orientation="horizontal"
+    android:padding="20dp">
+
+    <androidx.cardview.widget.CardView
+        android:layout_width="120dp"
+        android:layout_height="70dp"
+        android:layout_margin="4dp"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="8dp"
+        android:clipChildren="true"
+        android:clipToPadding="true">
+
+        <ImageView
+            android:id="@+id/video_thumbnail"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_video_placeholder" />
+
+        <!-- Quality Overlay in the Bottom-Right corner -->
+        <TextView
+            android:id="@+id/video_quality"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:padding="2dp"
+            android:text="720p"
+            android:textSize="10sp"
+            android:textColor="#FFFFFF"
+            android:background="#99575757"
+            android:fontFamily="sans-serif-medium"/>
+    </androidx.cardview.widget.CardView>
+
+    <!-- Text and Metadata Area on the Right -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="0dp"
+        android:layout_height="68dp"
+        android:layout_marginTop="2dp"
+        android:layout_weight="1"
+        android:layout_marginStart="16dp">
+
+        <!-- Video Name (Limited to 2 lines) -->
+        <TextView
+            android:id="@+id/video_name"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:textSize="16sp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"/>
+
+        <!-- Video Size (Bottom-Left corner of Text Area) -->
+        <TextView
+            android:id="@+id/video_size"
+            android:layout_width="70dp"
+            android:layout_height="0dp"
+            android:textSize="12sp"
+            android:textColor="#8A8A8A"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"/>
+
+        <!-- Video Duration (Bottom-Right corner of Text Area) -->
+        <TextView
+            android:id="@+id/video_duration"
+            android:layout_width="75dp"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="#8A8A8A"
+            android:gravity="end"
+            android:textAlignment="textEnd"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</LinearLayout>

@@ -1,0 +1,20 @@
+<resources>
+    <!-- Base application theme -->
+    <style name="Base.Theme.CineStream" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="colorBackground">#FFFFFF</item>
+        <item name="colorOnBackground">#000000</item>
+        <item name="android:statusBarColor">@color/colorBackground</item>
+    </style>
+
+    <!-- Theme for Custom File Explorer (Light Mode) -->
+    <style name="PlayerFullScreenTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowTranslucentStatus">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item> <!-- Transparent status bar -->
+        <item name="android:windowTranslucentNavigation">true</item>
+    </style>
+</resources>
