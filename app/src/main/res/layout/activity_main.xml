@@ -44,6 +44,66 @@
 
     </com.google.android.material.card.MaterialCardView>
 
+    <!-- Floating search bar — position set in code below titleCard -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/searchCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        app:cardElevation="0dp"
+        app:cardCornerRadius="28dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="#1AFFFFFF"
+        app:cardBackgroundColor="#28FFFFFF"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_search"
+                android:alpha="0.6" />
+
+            <EditText
+                android:id="@+id/searchInput"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="Search videos..."
+                android:textSize="13sp"
+                android:textColor="?android:textColorPrimary"
+                android:textColorHint="?android:textColorSecondary"                android:paddingStart="10dp"
+                android:paddingEnd="8dp"
+                android:inputType="text"
+                android:imeOptions="actionSearch"
+                android:singleLine="true"
+                android:maxLines="1" />
+
+            <ImageButton
+                android:id="@+id/searchClear"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_close"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="6dp"
+                android:alpha="0.6"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
     <!-- Floating toggle button — bottom right -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/toggleViewBtn"

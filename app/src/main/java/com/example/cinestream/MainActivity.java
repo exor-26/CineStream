@@ -16,6 +16,8 @@ import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.Toast;
 
@@ -53,6 +55,12 @@ public class MainActivity extends AppCompatActivity {
     private MaterialCardView  toggleViewBtn;
     private ImageView         toggleIcon;
 
+    private MaterialCardView searchCard;
+    private EditText searchInput;
+    private ImageButton searchClear;
+    private final List<VideoFile> filteredFiles = new ArrayList<>();
+    private VideoAdapter filteredAdapter;
+
     private VideoAdapter      videoAdapter;
     private FolderAdapter     folderAdapter;
 
@@ -84,16 +92,62 @@ public class MainActivity extends AppCompatActivity {
         toggleViewBtn = findViewById(R.id.toggleViewBtn);
         toggleIcon    = findViewById(R.id.toggleIcon);
 
+        searchCard  = findViewById(R.id.searchCard);
+        searchInput = findViewById(R.id.searchInput);
+        searchClear = findViewById(R.id.searchClear);
+
         // ── Card color adapts to light/dark ──
         if (isLightMode()) {
             titleCard.setCardBackgroundColor(Color.argb(180, 255, 255, 255));
             toggleViewBtn.setCardBackgroundColor(Color.argb(200, 240, 240, 245));
+            searchCard.setCardBackgroundColor(Color.argb(180, 220, 220, 225)); // ← visible in light
         } else {
             titleCard.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
             toggleViewBtn.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
+            searchCard.setCardBackgroundColor(Color.argb(60, 255, 255, 255));  // ← subtle in dark
         }
 
-        // ── Insets: status bar + recyclerView paddingTop ──
+        filteredAdapter = new VideoAdapter(this, filteredFiles);
+
+        searchInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void afterTextChanged(android.text.Editable s) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                String query = s.toString().trim().toLowerCase();
+                if (query.isEmpty()) {
+                    searchClear.setVisibility(View.GONE);
+                    // Restore full list
+                    if (currentState == ViewState.ALL_VIDEOS) {
+                        recyclerView.setAdapter(videoAdapter);
+                    }
+                } else {
+                    searchClear.setVisibility(View.VISIBLE);
+                    // Filter only in ALL_VIDEOS mode
+                    if (currentState == ViewState.ALL_VIDEOS) {
+                        filteredFiles.clear();
+                        for (VideoFile vf : videoFiles) {
+                            if (vf.getName().toLowerCase().contains(query)) {
+                                filteredFiles.add(vf);
+                            }
+                        }
+                        recyclerView.setAdapter(filteredAdapter);
+                        filteredAdapter.notifyDataSetChanged();
+                    }
+                }
+            }
+        });
+
+        searchClear.setOnClickListener(v -> {
+            searchInput.setText("");
+            searchInput.clearFocus();
+            // Hide keyboard
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(searchInput.getWindowToken(), 0);
+        });
+
         ViewCompat.setOnApplyWindowInsetsListener(titleCard, (v, insets) -> {
             int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
             int navBarHeight    = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
@@ -103,7 +157,6 @@ public class MainActivity extends AppCompatActivity {
             lp.topMargin = statusBarHeight + 12;
             titleCard.setLayoutParams(lp);
 
-            // Also push toggle button above nav bar
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams tlp =
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) toggleViewBtn.getLayoutParams();
             tlp.bottomMargin = navBarHeight + 24;
@@ -115,9 +168,28 @@ public class MainActivity extends AppCompatActivity {
                         public void onGlobalLayout() {
                             int cardBottom = titleCard.getBottom();
                             if (cardBottom > 0) {
-                                int gap = (int) (16 * getResources().getDisplayMetrics().density);
-                                recyclerView.setPadding(0, cardBottom + gap, 0, navBarHeight);
-                                recyclerView.scrollToPosition(0);
+                                // Position searchCard just below titleCard
+                                int gap = (int) (8 * getResources().getDisplayMetrics().density);
+                                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams slp =
+                                        (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) searchCard.getLayoutParams();
+                                slp.topMargin = cardBottom + gap;
+                                searchCard.setLayoutParams(slp);
+
+                                // Once searchCard is measured push recyclerView below both
+                                searchCard.getViewTreeObserver().addOnGlobalLayoutListener(
+                                        new ViewTreeObserver.OnGlobalLayoutListener() {
+                                            @Override
+                                            public void onGlobalLayout() {
+                                                int searchBottom = searchCard.getBottom();
+                                                if (searchBottom > 0) {
+                                                    int gap2 = (int) (8 * getResources().getDisplayMetrics().density);
+                                                    recyclerView.setPadding(0, searchBottom + gap2, 0, navBarHeight);
+                                                    recyclerView.scrollToPosition(0);
+                                                    searchCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                                                }
+                                            }
+                                        });
+
                                 titleCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                             }
                         }
@@ -206,12 +278,23 @@ public class MainActivity extends AppCompatActivity {
         recyclerView.setAdapter(videoAdapter);
         videoAdapter.notifyDataSetChanged();
         recyclerView.scrollToPosition(0);
+        searchCard.setVisibility(View.VISIBLE);
+        // Restore padding to include search bar
+        int gap = (int) (8 * getResources().getDisplayMetrics().density);
+        recyclerView.setPadding(0, searchCard.getBottom() + gap,
+                recyclerView.getPaddingRight(), recyclerView.getPaddingBottom());
     }
 
     @SuppressLint("NotifyDataSetChanged")
     private void showFolderList() {
         currentState = ViewState.FOLDER_LIST;
         toggleIcon.setImageResource(R.drawable.video);  // show video icon = switch back to all
+        searchCard.setVisibility(View.GONE);
+        searchInput.setText("");
+        // Reset padding to titleCard only — no search bar gap
+        int gap = (int) (8 * getResources().getDisplayMetrics().density);
+        recyclerView.setPadding(0, titleCard.getBottom() + gap,
+                recyclerView.getPaddingRight(), recyclerView.getPaddingBottom());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             buildFolderList();
         }
@@ -226,6 +309,10 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("NotifyDataSetChanged")
     private void showFolderContents(FolderItem folder) {
         currentState = ViewState.FOLDER_CONTENTS;
+        // Reset padding to titleCard only — no search bar gap
+        int gap = (int) (8 * getResources().getDisplayMetrics().density);
+        recyclerView.setPadding(0, titleCard.getBottom() + gap,
+                recyclerView.getPaddingRight(), recyclerView.getPaddingBottom());
 
         // Filter videos whose direct parent matches this folder
         List<VideoFile> filtered = new ArrayList<>();
