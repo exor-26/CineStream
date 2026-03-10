@@ -87,6 +87,24 @@ Verified flows:
 
 Manual UX-oriented checks such as share target behavior, gesture feel, and destructive media actions should still be validated by hand before release.
 
+## Contributing
+
+Contributions are welcome. For anything substantial:
+
+1. open an issue first for discussion
+2. keep changes scoped and reviewable
+3. run `.\gradlew.bat assembleDebug` before opening a pull request
+
+Repository templates are included for:
+
+- bug reports
+- feature requests
+- pull requests
+
+## Releases
+
+Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 ## Current version
 
 - `versionName`: `8.7`
@@ -103,4 +121,3 @@ Manual UX-oriented checks such as share target behavior, gesture feel, and destr
 ## Repository hygiene
 
 Generated local verification artifacts such as `cinestream-*.xml` UI dumps are ignored and should not be committed.
-
