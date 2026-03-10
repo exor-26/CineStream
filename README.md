@@ -74,7 +74,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Tested status
 
-The current debug build has been verified on a connected physical Google Pixel 6 Pro.
+The current debug build has been verified on a connected physical Vivo V2504 (Vivo T4 Ultra).
 
 Verified flows:
 
