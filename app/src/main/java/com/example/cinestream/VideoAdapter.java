@@ -1,25 +1,21 @@
 package com.example.cinestream;
 
 import android.annotation.SuppressLint;
-import android.content.ContentValues;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.media.MediaMetadataRetriever;
-import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.MediaStore;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.EditText;
-import android.widget.ImageView;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -37,7 +33,6 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
@@ -47,14 +42,24 @@ import java.util.concurrent.Executors;
 
 public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHolder> {
 
+    // The adapter delegates "real" actions back to the activity so storage mutations,
+    // navigation, and permission flows stay centralized in one place.
+    public interface Listener {
+        void onPlayVideo(VideoFile videoFile);
+        void onRenameVideo(VideoFile videoFile);
+        void onDeleteVideo(VideoFile videoFile);
+    }
+
     private final Context context;
     private final List<VideoFile> videoFiles;
+    private final Listener listener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
 
-    public VideoAdapter(Context context, List<VideoFile> videoFiles) {
+    public VideoAdapter(Context context, List<VideoFile> videoFiles, Listener listener) {
         this.context = context;
         this.videoFiles = videoFiles;
+        this.listener = listener;
     }
 
     @NonNull
@@ -68,52 +73,51 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     @OptIn(markerClass = UnstableApi.class)
     @Override
     public void onBindViewHolder(@NonNull VideoViewHolder holder, int position) {
+        // Bind against a content Uri instead of a raw file path so the adapter continues to work
+        // under scoped storage on Android 10+.
         VideoFile videoFile = videoFiles.get(position);
-        File video = new File(videoFile.getPath());
+        Uri videoUri = videoFile.getContentUri();
 
         holder.videoName.setText(videoFile.getName());
 
         if (holder.videoProgress != null) {
-            float fraction = PlaybackPrefs.getInstance(context).getProgressFraction(videoFile.getPath());
+            // The small progress bar in the thumbnail is purely library state. It is independent
+            // from ExoPlayer and reads from our persisted playback progress cache.
+            float fraction = PlaybackPrefs.getInstance(context).getProgressFraction(videoFile.getPlaybackKey());
             if (fraction > 0f) {
                 holder.videoProgress.setVisibility(View.VISIBLE);
-                holder.videoProgress.setPivotX(0f);       // scale from left edge
-                holder.videoProgress.setScaleX(fraction); // 0.0–1.0 fills proportionally
+                holder.videoProgress.setPivotX(0f);
+                holder.videoProgress.setScaleX(fraction);
             } else {
                 holder.videoProgress.setVisibility(View.GONE);
-                holder.videoProgress.setScaleX(1f);       // reset for recycled views
+                holder.videoProgress.setScaleX(1f);
             }
         }
 
-        // ── Reset tint before loading to avoid recycled colour bleed ──
         holder.cardTint.setBackgroundColor(Color.TRANSPARENT);
 
-        // ── Load thumbnail + extract Palette for card tint ──
+        // Glide handles thumbnail extraction from the content Uri, while Palette gives each
+        // card a subtle color identity based on the actual video frame.
         Glide.with(context)
                 .asBitmap()
-                .load(video)
+                .load(videoUri)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .placeholder(R.drawable.ic_video_placeholder)
                 .into(new CustomTarget<Bitmap>() {
                     @Override
                     public void onResourceReady(@NonNull Bitmap resource,
                                                 Transition<? super Bitmap> transition) {
-                        // Set thumbnail
                         holder.videoThumbnail.setImageBitmap(resource);
 
-                        // Extract dominant color and apply as subtle card tint
                         Palette.from(resource).generate(palette -> {
                             if (palette == null) return;
 
-                            // Prefer vibrant → muted → dominant — avoids near-black on dark thumbnails
                             Palette.Swatch swatch = palette.getVibrantSwatch();
                             if (swatch == null) swatch = palette.getMutedSwatch();
                             if (swatch == null) swatch = palette.getDominantSwatch();
                             if (swatch == null) return;
 
                             int rgb = swatch.getRgb();
-
-                            // Skip if colour is too dark (brightness < 40) — no point tinting with black
                             float[] hsv = new float[3];
                             Color.colorToHSV(rgb, hsv);
                             if (hsv[2] < 0.15f) return;
@@ -121,14 +125,13 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                             int r = Color.red(rgb);
                             int g = Color.green(rgb);
                             int b = Color.blue(rgb);
-                            // Gradient: colour near thumbnail (left) → transparent (right)
                             android.graphics.drawable.GradientDrawable gradient =
                                     new android.graphics.drawable.GradientDrawable(
                                             android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
                                             new int[]{
-                                                    Color.argb(60, r, g, b),  // left — near thumbnail
-                                                    Color.argb(20, r, g, b),  // mid — fading
-                                                    Color.argb(0,  r, g, b)   // right — fully transparent
+                                                    Color.argb(60, r, g, b),
+                                                    Color.argb(20, r, g, b),
+                                                    Color.argb(0, r, g, b)
                                             }
                                     );
                             gradient.setCornerRadius(20 * context.getResources().getDisplayMetrics().density);
@@ -143,15 +146,16 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                     }
                 });
 
-        holder.videoSize.setText(getFileSize(video.length()));
+        holder.videoSize.setText(getFileSize(videoFile.getSizeBytes()));
 
-        // Retrieve video duration and quality asynchronously
+        // Metadata extraction is intentionally off the UI thread because MediaMetadataRetriever
+        // can block on slower storage and would otherwise make scrolling feel heavy.
         executorService.execute(() -> {
-            String duration = formatDuration(getVideoDuration(video.getPath()));
+            String duration = formatDuration(getVideoDuration(videoUri));
             String quality = "Unknown";
 
             try {
-                Map<String, String> videoDetails = getVideoDetails(video.getPath());
+                Map<String, String> videoDetails = getVideoDetails(videoUri);
                 quality = videoDetails.getOrDefault("Quality", quality);
             } catch (IOException e) {
                 Log.e("VideoAdapter", "Error retrieving video details", e);
@@ -164,31 +168,27 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             });
         });
 
-        holder.itemView.setOnClickListener(v -> {
-            String videoPath = videoFile.getPath();
-            Log.d("VideoAdapter", "Video path: " + videoPath);
-            if (videoPath != null && !videoPath.isEmpty()) {
-                Intent intent = new Intent(context, VideoPlayerActivity.class);
-                intent.putExtra("VIDEO_PATH", videoPath);
-                context.startActivity(intent);
-            } else {
-                Toast.makeText(context, "Video file path is invalid.", Toast.LENGTH_SHORT).show();
-            }
-        });
+        // A normal tap means "open in player". The activity decides how to launch playback.
+        holder.itemView.setOnClickListener(v -> listener.onPlayVideo(videoFile));
 
+        // Long-press keeps secondary actions discoverable without overcrowding each card.
         holder.itemView.setOnLongClickListener(v -> {
             PopupMenu popupMenu = new PopupMenu(context, holder.itemView, Gravity.END);
             popupMenu.getMenuInflater().inflate(R.menu.video_popup_menu, popupMenu.getMenu());
             popupMenu.setOnMenuItemClickListener(item -> {
                 int itemId = item.getItemId();
                 if (itemId == R.id.menu_delete) {
-                    deleteVideo(videoFile);
+                    listener.onDeleteVideo(videoFile);
                     return true;
                 } else if (itemId == R.id.menu_rename) {
-                    renameVideo(videoFile);
+                    listener.onRenameVideo(videoFile);
                     return true;
                 } else if (itemId == R.id.menu_info) {
-                    try { showVideoInfo(videoFile); } catch (IOException e) { throw new RuntimeException(e); }
+                    try {
+                        showVideoInfo(videoFile);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
                     return true;
                 } else if (itemId == R.id.menu_share) {
                     shareVideo(videoFile);
@@ -208,139 +208,88 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     }
 
     public static class VideoViewHolder extends RecyclerView.ViewHolder {
-        ImageView videoThumbnail;
+        android.widget.ImageView videoThumbnail;
         TextView videoName, videoSize, videoDuration, videoQuality;
-        View cardTint; // ← tint layer reference
-        View videoProgress;// ── NEW
+        View cardTint;
+        View videoProgress;
 
         @SuppressLint("WrongViewCast")
         public VideoViewHolder(@NonNull View itemView) {
             super(itemView);
             videoThumbnail = itemView.findViewById(R.id.video_thumbnail);
-            videoName      = itemView.findViewById(R.id.video_name);
-            videoSize      = itemView.findViewById(R.id.video_size);
-            videoDuration  = itemView.findViewById(R.id.video_duration);
-            videoQuality   = itemView.findViewById(R.id.video_quality);
-            cardTint       = itemView.findViewById(R.id.card_tint); // ← new
-            videoProgress  = itemView.findViewById(R.id.video_progress);
+            videoName = itemView.findViewById(R.id.video_name);
+            videoSize = itemView.findViewById(R.id.video_size);
+            videoDuration = itemView.findViewById(R.id.video_duration);
+            videoQuality = itemView.findViewById(R.id.video_quality);
+            cardTint = itemView.findViewById(R.id.card_tint);
+            videoProgress = itemView.findViewById(R.id.video_progress);
         }
     }
 
-    // ── All helper methods below unchanged ────────────────────────────
-
     @SuppressLint("DefaultLocale")
     private String getFileSize(long sizeInBytes) {
+        if (sizeInBytes <= 0) return "Unknown";
         if (sizeInBytes < 1024) return sizeInBytes + " B";
         int exp = (int) (Math.log(sizeInBytes) / Math.log(1024));
         String units = "KMGTPE".charAt(exp - 1) + "B";
         return String.format("%.1f %s", sizeInBytes / Math.pow(1024, exp), units);
     }
 
-    private String getVideoDuration(String path) {
+    private String getVideoDuration(Uri uri) {
+        // MediaMetadataRetriever still works well here as a lightweight way to read duration
+        // without having to prepare a player instance for each list row.
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         try {
-            retriever.setDataSource(path);
+            retriever.setDataSource(context, uri);
             String duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
             return String.valueOf(duration != null ? Long.parseLong(duration) : 0);
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e("VideoAdapter", "Error reading duration", e);
             return String.valueOf(0);
         } finally {
-            try { retriever.release(); } catch (IOException e) { throw new RuntimeException(e); }
+            try {
+                retriever.release();
+            } catch (Exception e) {
+                Log.e("VideoAdapter", "Error releasing retriever", e);
+            }
         }
     }
 
-    @SuppressLint("NotifyDataSetChanged")
-    private void deleteVideo(VideoFile videoFile) {
-        new AlertDialog.Builder(context)
-                .setTitle("Delete Video")
-                .setMessage("Are you sure you want to delete this video?")
-                .setPositiveButton("Yes", (dialog, which) -> {
-                    File file = new File(videoFile.getPath());
-                    if (file.exists() && file.delete()) {
-                        context.getContentResolver().delete(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                                MediaStore.Video.Media.DATA + "=?", new String[]{videoFile.getPath()});
-                        videoFiles.remove(videoFile);
-                        notifyDataSetChanged();
-                        Toast.makeText(context, "Video deleted and media store updated", Toast.LENGTH_SHORT).show();
-                    } else {
-                        Toast.makeText(context, "Failed to delete video", Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .setNegativeButton("No", null)
-                .show();
-    }
-
-    @SuppressLint("NotifyDataSetChanged")
-    private void renameVideo(VideoFile videoFile) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(context);
-        builder.setTitle("Rename Video");
-        final EditText input = new EditText(context);
-        input.setText(videoFile.getName());
-        builder.setView(input);
-        builder.setPositiveButton("OK", (dialog, which) -> {
-            String newName = input.getText().toString().trim();
-            if (!newName.isEmpty()) {
-                String extension = videoFile.getPath().substring(videoFile.getPath().lastIndexOf('.'));
-                if (!newName.endsWith(extension)) newName += extension;
-                File oldFile = new File(videoFile.getPath());
-                File newFile = new File(oldFile.getParent(), newName);
-                if (newFile.exists()) {
-                    Toast.makeText(context, "File already exists with the new name", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                if (oldFile.renameTo(newFile)) {
-                    context.getContentResolver().delete(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                            MediaStore.Video.Media.DATA + "=?", new String[]{oldFile.getAbsolutePath()});
-                    ContentValues values = new ContentValues();
-                    values.put(MediaStore.Video.Media.DATA, newFile.getAbsolutePath());
-                    values.put(MediaStore.Video.Media.DISPLAY_NAME, newFile.getName());
-                    values.put(MediaStore.Video.Media.TITLE, newFile.getName());
-                    values.put(MediaStore.Video.Media.MIME_TYPE, "video/" + extension.replace(".", ""));
-                    context.getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
-                    videoFile.setPath(newFile.getAbsolutePath());
-                    videoFile.setName(newName);
-                    MediaScannerConnection.scanFile(context, new String[]{newFile.getAbsolutePath()},
-                            null, (path, uri) ->
-                                    Toast.makeText(context, "Video renamed and refreshed successfully", Toast.LENGTH_SHORT).show());
-                    notifyDataSetChanged();
-                } else {
-                    Toast.makeText(context, "Rename failed", Toast.LENGTH_SHORT).show();
-                }
-            } else {
-                Toast.makeText(context, "Name cannot be empty", Toast.LENGTH_SHORT).show();
-            }
-        });
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-        builder.show();
-    }
-
     private void showVideoInfo(VideoFile videoFile) throws IOException {
+        // This dialog intentionally combines stored metadata (name, folder, size) with live
+        // retriever data so the user gets a complete snapshot in one place.
         AlertDialog.Builder builder = new AlertDialog.Builder(context);
         builder.setTitle("Video Information");
         StringBuilder info = new StringBuilder();
         info.append("Name: ").append(videoFile.getName()).append("\n");
-        info.append("Path: ").append(videoFile.getPath()).append("\n");
-        info.append("Duration: ").append(formatDuration(getVideoDuration(videoFile.getPath()))).append("\n");
-        Map<String, String> videoDetails = getVideoDetails(videoFile.getPath());
+        info.append("Uri: ").append(videoFile.getContentUri()).append("\n");
+        if (videoFile.getFolderName() != null && !videoFile.getFolderName().isEmpty()) {
+            info.append("Folder: ").append(videoFile.getFolderName()).append("\n");
+        }
+        info.append("Duration: ").append(formatDuration(getVideoDuration(videoFile.getContentUri()))).append("\n");
+        info.append("Size: ").append(getFileSize(videoFile.getSizeBytes())).append("\n");
+        Map<String, String> videoDetails = getVideoDetails(videoFile.getContentUri());
         info.append("Video Codec: ").append(videoDetails.get("Codec")).append("\n");
         info.append("Video Resolution: ").append(videoDetails.get("Resolution")).append("\n");
         info.append("Video Bitrate: ").append(videoDetails.get("Bitrate")).append("\n");
-        Log.d("Video Info", info.toString());
         builder.setMessage(info.toString());
         builder.setPositiveButton("OK", (dialog, which) -> dialog.dismiss());
         builder.show();
     }
 
     @SuppressLint("DefaultLocale")
-    private Map<String, String> getVideoDetails(String path) throws IOException {
+    private Map<String, String> getVideoDetails(Uri uri) throws IOException {
+        // The method returns strings rather than a dedicated model to keep the info dialog and
+        // row binding code simple; this is just transient display data.
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         Map<String, String> videoDetails = new HashMap<>();
         try {
-            retriever.setDataSource(path);
+            retriever.setDataSource(context, uri);
             String videoCodec = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE);
-            videoDetails.put("Codec", videoCodec != null ? videoCodec.split("/")[1] : "Unknown");
-            String width  = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+            videoDetails.put("Codec", videoCodec != null && videoCodec.contains("/")
+                    ? videoCodec.split("/")[1]
+                    : "Unknown");
+            String width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
             String height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
             if (width != null && height != null) {
                 int w = Integer.parseInt(width);
@@ -359,9 +308,13 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 videoDetails.put("Bitrate", "Unknown");
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e("VideoAdapter", "Error reading details", e);
         } finally {
-            retriever.release();
+            try {
+                retriever.release();
+            } catch (Exception e) {
+                Log.e("VideoAdapter", "Error releasing retriever", e);
+            }
         }
         return videoDetails;
     }
@@ -382,17 +335,29 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     private String formatDuration(String duration) {
         if (duration == null) return "Unknown";
         long durationMs = Long.parseLong(duration);
-        long hours   = (durationMs / 1000) / 3600;
+        long hours = (durationMs / 1000) / 3600;
         long minutes = ((durationMs / 1000) % 3600) / 60;
         long seconds = (durationMs / 1000) % 60;
         if (hours > 0) return String.format("%02d:%02d:%02d", hours, minutes, seconds);
-        else           return String.format("%02d:%02d", minutes, seconds);
+        else return String.format("%02d:%02d", minutes, seconds);
     }
 
     private void shareVideo(VideoFile videoFile) {
+        // Sharing through the content Uri plus ClipData is the scoped-storage-safe way to give
+        // another app temporary access to this media item.
         Intent shareIntent = new Intent(Intent.ACTION_SEND);
         shareIntent.setType("video/*");
-        shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.parse(videoFile.getPath()));
-        context.startActivity(Intent.createChooser(shareIntent, "Share video via"));
+        shareIntent.putExtra(Intent.EXTRA_STREAM, videoFile.getContentUri());
+        shareIntent.setClipData(ClipData.newUri(
+                context.getContentResolver(),
+                videoFile.getName(),
+                videoFile.getContentUri()
+        ));
+        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            context.startActivity(Intent.createChooser(shareIntent, "Share video via"));
+        } catch (Exception e) {
+            Toast.makeText(context, "No app available to share this video.", Toast.LENGTH_SHORT).show();
+        }
     }
 }

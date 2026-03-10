@@ -5,8 +5,12 @@ import android.content.SharedPreferences;
 
 public class PlaybackPrefs {
 
+    // Keep playback state in one small preference file so resume data survives app restarts
+    // without needing a database for a few simple key/value pairs.
     private static final String PREFS_NAME    = "playback_prefs";
-    private static final String KEY_LAST      = "last_played";
+    // Store the last opened media key separately so the library can pin that item to the top.
+    private static final String KEY_LAST      = "last_played_key";
+    // Prefixes let us store many media entries in the same SharedPreferences file.
     private static final String PREFIX_POS    = "pos_";
     private static final String PREFIX_DUR    = "dur_";
 
@@ -23,30 +27,32 @@ public class PlaybackPrefs {
         return instance;
     }
 
-    public void save(String path, long positionMs, long durationMs) {
+    // Save both playback position and total duration together so the library can show
+    // a progress bar even before the user opens the player again.
+    public void save(String mediaKey, long positionMs, long durationMs) {
         prefs.edit()
-                .putLong(PREFIX_POS + path, positionMs)
-                .putLong(PREFIX_DUR + path, durationMs)
-                .putString(KEY_LAST, path)
+                .putLong(PREFIX_POS + mediaKey, positionMs)
+                .putLong(PREFIX_DUR + mediaKey, durationMs)
+                .putString(KEY_LAST, mediaKey)
                 .apply();
     }
 
-    public long getPosition(String path) {
-        return prefs.getLong(PREFIX_POS + path, 0);
+    public long getPosition(String mediaKey) {
+        return prefs.getLong(PREFIX_POS + mediaKey, 0);
     }
 
-    public long getDuration(String path) {
-        return prefs.getLong(PREFIX_DUR + path, 0);
+    public long getDuration(String mediaKey) {
+        return prefs.getLong(PREFIX_DUR + mediaKey, 0);
     }
 
-    public String getLastPlayed() {
+    public String getLastPlayedKey() {
         return prefs.getString(KEY_LAST, null);
     }
 
-    // Fraction 0.0–1.0, returns 0 if no progress saved
-    public float getProgressFraction(String path) {
-        long pos = getPosition(path);
-        long dur = getDuration(path);
+    // Convert raw playback numbers into a UI-ready fraction for the list progress indicator.
+    public float getProgressFraction(String mediaKey) {
+        long pos = getPosition(mediaKey);
+        long dur = getDuration(mediaKey);
         if (dur <= 0 || pos <= 0) return 0f;
         return Math.min(1f, (float) pos / (float) dur);
     }

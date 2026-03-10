@@ -4,11 +4,13 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.database.Cursor;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.Menu;
@@ -28,14 +30,16 @@ import android.widget.Toast;
 
 import androidx.annotation.OptIn;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.view.GestureDetectorCompat;
 import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.TrackGroup;
+import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -45,13 +49,19 @@ import androidx.media3.exoplayer.trackselection.MappingTrackSelector;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
-import java.io.File;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.IntStream;
 
 @UnstableApi
 public class VideoPlayerActivity extends AppCompatActivity {
+
+    // The player can be opened from inside the app or through an external ACTION_VIEW intent.
+    // These extras cover the richer in-app path while still allowing external fallback.
+    public static final String EXTRA_VIDEO_URI = "VIDEO_URI";
+    public static final String EXTRA_PLAYBACK_KEY = "PLAYBACK_KEY";
+    public static final String EXTRA_VIDEO_TITLE = "VIDEO_TITLE";
 
     private ExoPlayer exoPlayer;
     private PlayerView playerView;
@@ -72,9 +82,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private boolean isLockedInLandscape = false;
     private boolean isControlsVisible = true;
 
-    private GestureDetectorCompat gestureDetector;
+    private GestureDetector gestureDetector;
     private AudioManager audioManager;
-    private String videoPath;
+    private Uri videoUri;
+    private String playbackKey;
 
     private float maxVolume;
     private float currentVolume;
@@ -86,10 +97,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_player);
 
-        // Keep the screen on while the activity is running
+        // Prevent the screen from dimming mid-playback.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        // Initialize PlayerView and Buttons
         playerView = findViewById(R.id.player_view);
         rotateButton = findViewById(R.id.btn_rotate);
         cropButton = findViewById(R.id.btn_crop);
@@ -100,10 +110,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
         brightnessIcon = findViewById(R.id.brightness_icon);
         volumeOverlay = findViewById(R.id.overlay_container);
 
-        // Position overlays at center of top-half of screen
+        // Overlays are positioned after layout because they depend on the actual screen height,
+        // not just the XML measurements.
         getWindow().getDecorView().post(() -> {
             int screenHeight = getWindow().getDecorView().getHeight();
-            int targetMargin = screenHeight / 4; // 25% from top = center of top half
+            int targetMargin = screenHeight / 4;
 
             androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams volLp =
                     (androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)
@@ -123,16 +134,17 @@ public class VideoPlayerActivity extends AppCompatActivity {
         volumeProgressBar = findViewById(R.id.volume_progress);
         volumeIcon = findViewById(R.id.volume_icon);
         tvVideoName = findViewById(R.id.tv_video_name);
-        btnBack     = findViewById(R.id.btn_back);
+        btnBack = findViewById(R.id.btn_back);
 
         btnBack.setOnClickListener(v -> {
             v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
             finish();
         });
 
-        // ── Get real status bar height BEFORE hideSystemUI steals it ──
         final View topBar = findViewById(R.id.top_bar);
 
+        // The top bar needs different padding rules in portrait and landscape because immersive
+        // video playback should still look correct around cutouts and status bars.
         ViewCompat.setOnApplyWindowInsetsListener(topBar, (v, insets) -> {
             int sidePad = (int) (8 * getResources().getDisplayMetrics().density);
             int sidePadLandscape = (int) (24 * getResources().getDisplayMetrics().density);
@@ -156,7 +168,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     v.setPadding(sidePad, (Integer) saved, sidePad, 0);
                 } else {
                     int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
-                    int h  = id > 0 ? getResources().getDimensionPixelSize(id) : 0;
+                    int h = id > 0 ? getResources().getDimensionPixelSize(id) : 0;
                     v.setPadding(sidePad, h, sidePad, 0);
                 }
             }
@@ -165,37 +177,22 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
         topBar.requestApplyInsets();
 
-        // Initialize video URI based on intent source
-        Uri videoUri = getIntent().getData();
+        // Resolve the media source first. If this fails, there is nothing useful the player can do.
+        videoUri = resolveVideoUri();
         if (videoUri == null) {
-            // Fallback for internal app launches
-            String videoPath = getIntent().getStringExtra("VIDEO_PATH");
-            if (videoPath == null || videoPath.isEmpty()) {
-                Log.e("VideoError", "Invalid video path");
-                Toast.makeText(this, "Invalid video file path", Toast.LENGTH_SHORT).show();
-                finish(); // Close activity if no valid path
-                return;
-            }
-            videoUri = Uri.fromFile(new File(videoPath)); // Convert path to URI for internal use
+            Log.e("VideoError", "Invalid video URI");
+            Toast.makeText(this, "Invalid video source", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
         }
 
-        videoPath = getIntent().getStringExtra("VIDEO_PATH");
-        if (videoPath == null && videoUri != null) {
-            videoPath = videoUri.getPath();
-        }
+        playbackKey = resolvePlaybackKey(videoUri);
+        tvVideoName.setText(resolveDisplayTitle(videoUri));
 
-        // Set video name — strip extension for clean display
-        if (videoPath != null) {
-            String name = new File(videoPath).getName();
-            int dot = name.lastIndexOf('.');
-            tvVideoName.setText(dot > 0 ? name.substring(0, dot) : name);
-        }
-
-        // Initialize ExoPlayer with a custom RenderersFactory that enables extension renderers
-        // 1) Keep the default selector (no special offload prefs needed)
+        // Prefer extension renderers so the FFmpeg decoder can handle formats that the device
+        // codec stack might reject, especially less common audio tracks.
         DefaultTrackSelector trackSelector = new DefaultTrackSelector(this);
 
-        // 2) RenderersFactory: prefer the FFmpeg extension for any track it can handle
         DefaultRenderersFactory renderersFactory =
                 new DefaultRenderersFactory(this)
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
@@ -207,56 +204,45 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
         playerView.setPlayer(exoPlayer);
 
-
-
-        // Prepare and play video using the URI
+        // Restore the last playback position before starting playback so resume feels immediate.
         MediaItem mediaItem = MediaItem.fromUri(videoUri);
         exoPlayer.setMediaItem(mediaItem);
         exoPlayer.prepare();
-        long savedPosition = PlaybackPrefs.getInstance(this).getPosition(videoPath);
+        long savedPosition = PlaybackPrefs.getInstance(this).getPosition(playbackKey);
         if (savedPosition > 0) exoPlayer.seekTo(savedPosition);
         exoPlayer.play();
 
-        // Set audio attributes with Media3's AudioAttributes class
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                 .build();
         exoPlayer.setAudioAttributes(audioAttributes, true);
 
-        // Initialize AudioManager
+        // Volume changes are routed through AudioManager because they affect the actual media stream.
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
         currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
 
-        // Initialize current brightness
+        // Use the current window brightness as the baseline for swipe gestures.
         currentBrightness = getWindow().getAttributes().screenBrightness;
 
-        // Implement buttons
         setupRotationButton();
         setupAudioTrackButton();
-
         setupCropButton();
-
-        // Handle gestures for volume and brightness
         setupGestureDetection();
 
-        // Make the activity full screen and use the notch area if available
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            // Request the window to use the notch area
             getWindow().getAttributes().layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
         setupInteractionListeners();
-        // Enter full-screen modes
         hideSystemUI();
-        resetHideControlsTimer(); // Start the timer for hiding controls
+        resetHideControlsTimer();
     }
 
     @Override
     protected void onStart() {
         super.onStart();
-        // Hide overlays at the start
         brightnessOverlay.setVisibility(View.GONE);
         volumeOverlay.setVisibility(View.GONE);
     }
@@ -265,7 +251,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (exoPlayer != null) {
-            exoPlayer.setPlayWhenReady(true);  // Resume playback
+            exoPlayer.setPlayWhenReady(true);
         }
     }
 
@@ -273,10 +259,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         if (exoPlayer != null) {
-            // Save position + duration before pausing
-            if (videoPath != null) {
+            // Save progress before leaving so both in-app playback and external intent playback
+            // can resume from the same stable key.
+            if (playbackKey != null) {
                 PlaybackPrefs.getInstance(this).save(
-                        videoPath,
+                        playbackKey,
                         exoPlayer.getCurrentPosition(),
                         exoPlayer.getDuration()
                 );
@@ -298,15 +285,90 @@ public class VideoPlayerActivity extends AppCompatActivity {
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
-            hideSystemUI();  // Reapply full-screen mode when the window regains focus
+            // Some system UI states are reset when the window focus changes, especially around
+            // permission prompts or multi-window transitions.
+            hideSystemUI();
         }
+    }
+
+    private Uri resolveVideoUri() {
+        // Internal launches pass the Uri as a string extra. External launches rely on the intent data.
+        String internalUri = getIntent().getStringExtra(EXTRA_VIDEO_URI);
+        if (internalUri != null && !internalUri.isEmpty()) {
+            return Uri.parse(internalUri);
+        }
+        return getIntent().getData();
+    }
+
+    private String resolvePlaybackKey(Uri uri) {
+        // If the app already knows the playback key, use it. Otherwise derive a best-effort key
+        // from the MediaStore id or fall back to the Uri text for external sources.
+        String explicitKey = getIntent().getStringExtra(EXTRA_PLAYBACK_KEY);
+        if (explicitKey != null && !explicitKey.isEmpty()) {
+            return explicitKey;
+        }
+
+        if ("content".equalsIgnoreCase(uri.getScheme())) {
+            Long id = tryResolveMediaStoreId(uri);
+            if (id != null) {
+                return "media:" + id;
+            }
+        }
+        return "uri:" + uri.toString();
+    }
+
+    private String resolveDisplayTitle(Uri uri) {
+        // Prefer a title explicitly passed by the library screen, then fall back to querying the
+        // provider, and finally use the last Uri segment if nothing else is available.
+        String explicitTitle = getIntent().getStringExtra(EXTRA_VIDEO_TITLE);
+        if (explicitTitle != null && !explicitTitle.isEmpty()) {
+            return stripExtension(explicitTitle);
+        }
+
+        if ("content".equalsIgnoreCase(uri.getScheme())) {
+            try (Cursor cursor = getContentResolver().query(
+                    uri,
+                    new String[]{MediaStore.MediaColumns.DISPLAY_NAME},
+                    null,
+                    null,
+                    null
+            )) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int index = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
+                    if (index >= 0) {
+                        String displayName = cursor.getString(index);
+                        if (displayName != null && !displayName.isEmpty()) {
+                            return stripExtension(displayName);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.e("VideoPlayer", "Unable to resolve display name", e);
+            }
+        }
+
+        String lastSegment = uri.getLastPathSegment();
+        return stripExtension(lastSegment != null ? lastSegment : "Video");
+    }
+
+    private Long tryResolveMediaStoreId(Uri uri) {
+        try {
+            return android.content.ContentUris.parseId(uri);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String stripExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
     }
 
     private void setupAudioTrackButton() {
         audioTrackButton.setOnClickListener(v -> {
             if (exoPlayer == null) return;
 
-            // Reuse the same selector you set up above
+            // Audio track switching only makes sense once the current mapped track info exists.
             DefaultTrackSelector trackSelector = (DefaultTrackSelector) exoPlayer.getTrackSelector();
             MappingTrackSelector.MappedTrackInfo mappedTrackInfo = trackSelector.getCurrentMappedTrackInfo();
             if (mappedTrackInfo == null) {
@@ -314,7 +376,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 return;
             }
 
-            // Find the audio renderer index
             int audioRendererIndex = IntStream.range(0, mappedTrackInfo.getRendererCount())
                     .filter(i -> mappedTrackInfo.getRendererType(i) == C.TRACK_TYPE_AUDIO)
                     .findFirst()
@@ -332,34 +393,33 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
             PopupMenu popupMenu = new PopupMenu(this, audioTrackButton);
 
-            // Populate menu with ALL tracks (including E‑AC‑3)
+            // Show all exposed audio tracks and label them by language when possible.
             for (int i = 0; i < trackGroups.length; i++) {
                 TrackGroup trackGroup = trackGroups.get(i);
                 for (int j = 0; j < trackGroup.length; j++) {
                     Format format = trackGroup.getFormat(j);
                     String lang = format.language;
                     String name = (lang == null || lang.isEmpty())
-                            ? "Track " + (j + 1)
-                            : "Track " + (j + 1) + " – " + lang;
+                            ? String.format(Locale.US, "Track %d", j + 1)
+                            : String.format(Locale.US, "Track %d - %s", j + 1, lang);
                     popupMenu.getMenu().add(Menu.NONE, i * 100 + j, j, name);
                 }
             }
 
-            // Handle selection override as before
             popupMenu.setOnMenuItemClickListener(item -> {
                 int groupIndex = item.getItemId() / 100;
                 int trackIndex = item.getItemId() % 100;
                 Format fmt = trackGroups.get(groupIndex).getFormat(trackIndex);
 
                 if (isAudioFormatSupported(fmt)) {
+                    // Clear any previous audio override so only the selected track remains active.
+                    TrackSelectionOverride override =
+                            new TrackSelectionOverride(trackGroups.get(groupIndex), trackIndex);
                     DefaultTrackSelector.Parameters params =
                             trackSelector.buildUponParameters()
-                                    .setRendererDisabled(audioRendererIndex, false)
-                                    .setSelectionOverride(
-                                            audioRendererIndex,
-                                            trackGroups,
-                                            new DefaultTrackSelector.SelectionOverride(groupIndex, trackIndex)
-                                    )
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                                    .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                                    .addOverride(override)
                                     .build();
                     trackSelector.setParameters(params);
                     Toast.makeText(this, "Selected: " + item.getTitle(), Toast.LENGTH_SHORT).show();
@@ -374,13 +434,15 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private boolean isAudioFormatSupported(Format format) {
+        // The popup may expose more tracks than we explicitly want to promise. This filter keeps
+        // the user away from formats we do not expect this build to handle reliably.
         String mime = format.sampleMimeType;
         List<String> supported = Arrays.asList(
-                "audio/mp4a-latm",  // AAC
-                "audio/mpeg",       // MP3
-                "audio/vorbis",     // Vorbis
-                "audio/opus",       // Opus
-                "audio/eac3",        // ← add E‑AC‑3 here
+                "audio/mp4a-latm",
+                "audio/mpeg",
+                "audio/vorbis",
+                "audio/opus",
+                "audio/eac3",
                 "audio/ac3"
         );
         return supported.contains(mime);
@@ -389,32 +451,31 @@ public class VideoPlayerActivity extends AppCompatActivity {
     @SuppressLint("SourceLockedOrientationActivity")
     private void setupRotationButton() {
         rotateButton.setOnClickListener(v -> {
+            // The rotation button acts as a lock/unlock toggle based on the current orientation.
             if (!isLockedInPortrait && getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
-                // Lock to portrait if currently in landscape
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 isLockedInPortrait = true;
                 isLockedInLandscape = false;
-                rotateButton.setImageResource(R.drawable.ic_rotation_locked); // Set locked icon
+                rotateButton.setImageResource(R.drawable.ic_rotation_locked);
             } else if (!isLockedInLandscape && getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                // Lock to sensor-based landscape mode to allow flipping
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 isLockedInLandscape = true;
                 isLockedInPortrait = false;
-                rotateButton.setImageResource(R.drawable.ic_rotation_locked); // Set locked icon
+                rotateButton.setImageResource(R.drawable.ic_rotation_locked);
             } else {
-                // Unlock to allow sensor-based rotation
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR);
                 isLockedInPortrait = false;
                 isLockedInLandscape = false;
-                rotateButton.setImageResource(R.drawable.ic_rotate); // Set unlocked icon
+                rotateButton.setImageResource(R.drawable.ic_rotate);
             }
 
-            hideSystemUI(); // Reapply full-screen mode after rotation
+            hideSystemUI();
         });
     }
 
     private void setupCropButton() {
         cropButton.setOnClickListener(v -> {
+            // Resize modes are exposed as user-friendly terms rather than raw ExoPlayer constants.
             PopupMenu popupMenu = new PopupMenu(this, cropButton);
             popupMenu.getMenu().add(Menu.NONE, 0, 0, "Original");
             popupMenu.getMenu().add(Menu.NONE, 1, 1, "Fill");
@@ -446,6 +507,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void applyCropping(CropType cropType) {
+        // Update both the underlying resize mode and the icon so the current display choice is visible.
         switch (cropType) {
             case ORIGINAL:
                 playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
@@ -464,12 +526,12 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @SuppressLint("ClickableViewAccessibility")
     private void setupGestureDetection() {
-        // Flag to know if user is dragging to adjust brightness/volume
+        // Gesture handling splits the screen in half: left controls brightness, right controls volume.
+        // Tap toggles the controls; vertical drag adjusts the matching setting.
         final boolean[] isAdjusting = {false};
-        // Remember down time for distinguishing taps
         final long[] downTime = {0};
 
-        gestureDetector = new GestureDetectorCompat(this, new GestureDetector.SimpleOnGestureListener() {
+        gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDown(MotionEvent e) {
                 isAdjusting[0] = false;
@@ -480,7 +542,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
             @Override
             public boolean onScroll(MotionEvent e1, MotionEvent e2, float dx, float dy) {
                 isAdjusting[0] = true;
-                // Delegate to your existing handlers:
                 float screenWidth = getWindow().getDecorView().getWidth();
                 if (Math.abs(dy) > Math.abs(dx)) {
                     if (e2.getX() < screenWidth / 2) {
@@ -496,21 +557,15 @@ public class VideoPlayerActivity extends AppCompatActivity {
         playerView.setOnTouchListener((v, event) -> {
             gestureDetector.onTouchEvent(event);
 
-            switch (event.getAction()) {
-                case MotionEvent.ACTION_UP:
-                    long upTime = System.currentTimeMillis();
-                    // It's a tap if we never scrolled AND duration < tap timeout
-                    if (!isAdjusting[0]
-                            && upTime - downTime[0] < ViewConfiguration.getTapTimeout()) {
-                        // Toggle your controls
-                        if (isControlsVisible) {
-                            hideControls();
-                        } else {
-                            showControls();
-                        }
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                long upTime = System.currentTimeMillis();
+                if (!isAdjusting[0] && upTime - downTime[0] < ViewConfiguration.getTapTimeout()) {
+                    if (isControlsVisible) {
+                        hideControls();
+                    } else {
+                        showControls();
                     }
-                    break;
-                // We no longer handle ACTION_DOWN here
+                }
             }
             return true;
         });
@@ -518,38 +573,36 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void handleBrightnessChange(float deltaY) {
         if (deltaY != 0) {
-            // Calculate brightness change
-            float change = deltaY / 1000; // Use deltaY for brightness change
-            // Get current brightness
+            // Window-level brightness is enough here because the gesture is intended as a temporary
+            // playback adjustment, not a permanent system setting.
+            float change = deltaY / 1000;
             WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
             float brightness = layoutParams.screenBrightness + change;
 
-            // Ensure brightness is within the 0.0 (completely dark) to 1.0 (fully bright) range
             brightness = Math.max(0.0f, Math.min(1.0f, brightness));
             layoutParams.screenBrightness = brightness;
             getWindow().setAttributes(layoutParams);
 
-            // Update current brightness and overlay
             currentBrightness = brightness;
-            updateBrightnessOverlay(brightness);  // Call to update overlay
+            updateBrightnessOverlay(brightness);
         }
     }
-    
+
     private void handleVolumeChange(float deltaY) {
         if (deltaY != 0) {
-            // Invert deltaY for volume control
-            float volume = currentVolume + (deltaY / 100); // Adjust volume based on deltaY
+            // Volume changes are clamped against the real stream limits reported by AudioManager.
+            float volume = currentVolume + (deltaY / 100);
             volume = Math.max(0, Math.min(maxVolume, volume));
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (int) volume, 0);
             currentVolume = volume;
 
-            // Calculate the correct percentage for the progress bar
             float volumePercentage = (currentVolume / maxVolume) * 100;
-            updateVolumeOverlay(volumePercentage); // Pass the percentage to update
+            updateVolumeOverlay(volumePercentage);
         }
     }
 
     private void updateBrightnessOverlay(float brightness) {
+        // Only one overlay should be visible at a time, otherwise the feedback gets cluttered.
         volumeOverlay.setVisibility(View.GONE);
         volumeOverlay.removeCallbacks(hideControlsRunnable);
 
@@ -572,95 +625,85 @@ public class VideoPlayerActivity extends AppCompatActivity {
         volumeOverlay.postDelayed(() -> volumeOverlay.setVisibility(View.GONE), 1500);
     }
 
-    // ── Always uses live screen height — works portrait + landscape ──
     private void positionOverlay(View overlay) {
+        // Recompute position every time so overlays stay centered even after rotation changes.
         int screenHeight = getWindow().getDecorView().getHeight();
-        int topMargin    = screenHeight / 8; // center of top half
+        int topMargin = screenHeight / 8;
 
         androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams lp =
                 (androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)
                         overlay.getLayoutParams();
-        lp.gravity   = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
+        lp.gravity = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
         lp.topMargin = topMargin;
         overlay.setLayoutParams(lp);
     }
 
     @OptIn(markerClass = UnstableApi.class)
     private void showControls() {
+        // We manage the extra chrome ourselves because the screen has custom top controls in
+        // addition to ExoPlayer's standard controller.
         playerView.showController();
         rotateButton.setVisibility(View.VISIBLE);
         cropButton.setVisibility(View.VISIBLE);
         audioTrackButton.setVisibility(View.VISIBLE);
-        // ── NEW ──
-        if (btnBack != null)     btnBack.setVisibility(View.VISIBLE);
+        if (btnBack != null) btnBack.setVisibility(View.VISIBLE);
         if (tvVideoName != null) tvVideoName.setVisibility(View.VISIBLE);
         View topBar = findViewById(R.id.top_bar);
         if (topBar != null) topBar.setVisibility(View.VISIBLE);
-        // ─────────
         isControlsVisible = true;
         resetHideControlsTimer();
     }
 
     @OptIn(markerClass = UnstableApi.class)
     private void hideControls() {
+        // Hiding both our own views and ExoPlayer's controls creates the clean full-screen state.
         playerView.hideController();
         rotateButton.setVisibility(View.GONE);
         audioTrackButton.setVisibility(View.GONE);
         cropButton.setVisibility(View.GONE);
-        // ── NEW ──
-        if (btnBack != null)     btnBack.setVisibility(View.GONE);
+        if (btnBack != null) btnBack.setVisibility(View.GONE);
         if (tvVideoName != null) tvVideoName.setVisibility(View.GONE);
         View topBar = findViewById(R.id.top_bar);
         if (topBar != null) topBar.setVisibility(View.GONE);
-        // ─────────
         isControlsVisible = false;
         hideSystemUI();
     }
 
     @SuppressLint("ClickableViewAccessibility")
     private void setupInteractionListeners() {
-        // Assume these views are defined
-        View brightnessOverlay = findViewById(R.id.brightness_overlay_container);
-        View volumeOverlay = findViewById(R.id.overlay_container); // This is the volume overlay
+        // Touching the overlays should keep the controls alive long enough for the user to read them.
+        View brightnessOverlayView = findViewById(R.id.brightness_overlay_container);
+        View volumeOverlayView = findViewById(R.id.overlay_container);
 
-        brightnessOverlay.setOnTouchListener((v, event) -> {
-            // Do something for brightness interaction
-            resetHideControlsTimer(); // Reset timer when user interacts
-            return true; // Consume touch event
+        brightnessOverlayView.setOnTouchListener((v, event) -> {
+            resetHideControlsTimer();
+            return true;
         });
 
-        volumeOverlay.setOnTouchListener((v, event) -> {
-            // Do something for volume interaction
-            resetHideControlsTimer(); // Reset timer when user interacts
-            return true; // Consume touch event
+        volumeOverlayView.setOnTouchListener((v, event) -> {
+            resetHideControlsTimer();
+            return true;
         });
     }
 
-    private final Handler uiHandler = new Handler();
-    private final Runnable hideControlsRunnable = () -> hideControls(); // Hides controls after a delay
+    private final Handler uiHandler = new Handler(android.os.Looper.getMainLooper());
+    private final Runnable hideControlsRunnable = this::hideControls;
 
     private void resetHideControlsTimer() {
-        uiHandler.removeCallbacks(hideControlsRunnable); // Clear any previous callbacks
-        uiHandler.postDelayed(hideControlsRunnable, 3000); // Auto-hide controls after 3 seconds
+        // Any user interaction postpones the auto-hide countdown.
+        uiHandler.removeCallbacks(hideControlsRunnable);
+        uiHandler.postDelayed(hideControlsRunnable, 3000);
     }
 
     private void hideSystemUI() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getWindow().setDecorFitsSystemWindows(false);
-            WindowInsetsController controller = getWindow().getInsetsController();
-            if (controller != null) {
-                controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                controller.setSystemBarsBehavior(
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            }
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        // Modern insets APIs are used here so immersive mode behaves consistently across Android versions.
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        if (controller != null) {
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+            controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         }
     }
 }

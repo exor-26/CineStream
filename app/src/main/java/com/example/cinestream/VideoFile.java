@@ -1,34 +1,38 @@
 package com.example.cinestream;
 
-import java.util.List;
+import android.net.Uri;
 
 public class VideoFile {
-    private String id;
+    private final long id;
     private String name;
-    private String path;
-    private List<String> qualities; // List of available qualities (optional)
+    private final Uri contentUri;
+    private final long sizeBytes;
+    private final long dateModified;
+    private final String folderName;
+    private final String folderKey;
+    private final String playbackKey;
 
-    // Constructor for use with qualities
-    public VideoFile(String id, String name, String path, List<String> qualities) {
+    public VideoFile(
+            long id,
+            String name,
+            Uri contentUri,
+            long sizeBytes,
+            long dateModified,
+            String folderName,
+            String folderKey,
+            String playbackKey
+    ) {
         this.id = id;
         this.name = name;
-        this.path = path;
-        this.qualities = qualities; // Initialize qualities
+        this.contentUri = contentUri;
+        this.sizeBytes = sizeBytes;
+        this.dateModified = dateModified;
+        this.folderName = folderName;
+        this.folderKey = folderKey;
+        this.playbackKey = playbackKey;
     }
 
-    // Constructor for use without qualities
-    public VideoFile(String id, String name, String path) {
-        this(id, name, path, null); // Calls the other constructor with qualities set to null
-    }
-
-    // Constructor for use with date modified (if required)
-    public VideoFile(String id, String name, String path, long dateModified) {
-        this(id, name, path, null); // Calls the constructor without qualities
-        // Optionally, store dateModified if you need to keep track of it
-    }
-
-    // Getters
-    public String getId() {
+    public long getId() {
         return id;
     }
 
@@ -36,21 +40,31 @@ public class VideoFile {
         return name;
     }
 
-    public String getPath() {
-        return path;
+    public Uri getContentUri() {
+        return contentUri;
     }
 
-    public List<String> getQualities() {
-        return qualities; // Getter for qualities
+    public long getSizeBytes() {
+        return sizeBytes;
     }
 
-    // Setters
+    public long getDateModified() {
+        return dateModified;
+    }
+
+    public String getFolderName() {
+        return folderName;
+    }
+
+    public String getFolderKey() {
+        return folderKey;
+    }
+
+    public String getPlaybackKey() {
+        return playbackKey;
+    }
+
     public void setName(String name) {
         this.name = name;
     }
-
-    public void setPath(String path) {
-        this.path = path;
-    }
-
 }
