@@ -21,14 +21,12 @@ import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
-import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.IntentSenderRequest;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.content.ContextCompat;
@@ -36,6 +34,7 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.media3.common.util.UnstableApi;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -75,6 +74,8 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private final List<VideoFile> videoFiles = new ArrayList<>();
     private final List<FolderItem> folderItems = new ArrayList<>();
+    private int lastNavBarInset = 0;
+    private boolean initialHeaderPaddingApplied = false;
 
     private VideoFile pendingVideoActionFile;
     private String pendingRenameName;
@@ -87,7 +88,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 if (isGranted) {
                     loadVideoFiles();
                 } else {
-                    Toast.makeText(this, "Permission denied.", Toast.LENGTH_SHORT).show();
+                    GlassUi.showToast(this, "Permission denied.");
                 }
             });
 
@@ -103,7 +104,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 if (pendingMediaAction == PendingMediaAction.DELETE) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         reloadAfterMutation();
-                        Toast.makeText(this, "Video deleted", Toast.LENGTH_SHORT).show();
+                        GlassUi.showToast(this, "Video deleted.");
                         clearPendingMediaAction();
                     } else {
                         performDelete(pendingVideoActionFile);
@@ -135,10 +136,20 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         recyclerView = findViewById(R.id.recyclerView);
         toggleViewBtn = findViewById(R.id.toggleViewBtn);
         toggleIcon = findViewById(R.id.toggleIcon);
+        recyclerView.setVisibility(View.INVISIBLE);
 
         searchCard = findViewById(R.id.searchCard);
         searchInput = findViewById(R.id.searchInput);
         searchClear = findViewById(R.id.searchClear);
+
+        // ── Immediate estimated padding — prevents first-frame jump ──────
+        int statusBarEst = 0;
+        int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (resId > 0) statusBarEst = getResources().getDimensionPixelSize(resId);
+        float dp = getResources().getDisplayMetrics().density;
+        // statusBar + 12dp margin + 59dp titleCard + 8dp gap + 48dp searchCard + 8dp gap
+        int estimatedPadding = statusBarEst + (int)((12 + 59 + 8 + 48 + 8) * dp);
+        recyclerView.setPadding(0, estimatedPadding, 0, 0);
 
         // The cards use slightly different alpha in light and dark mode so the frosted look
         // stays visible without feeling muddy or washed out.
@@ -200,6 +211,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         ViewCompat.setOnApplyWindowInsetsListener(titleCard, (v, insets) -> {
             int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
             int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+            lastNavBarInset = navBarHeight;
 
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) titleCard.getLayoutParams();
@@ -210,7 +222,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) toggleViewBtn.getLayoutParams();
             tlp.bottomMargin = navBarHeight + 24;
             toggleViewBtn.setLayoutParams(tlp);
-
             titleCard.getViewTreeObserver().addOnGlobalLayoutListener(
                     new ViewTreeObserver.OnGlobalLayoutListener() {
                         @Override
@@ -231,7 +242,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                                                 if (searchBottom > 0) {
                                                     int gap2 = (int) (8 * getResources().getDisplayMetrics().density);
                                                     recyclerView.setPadding(0, searchBottom + gap2, 0, navBarHeight);
-                                                    recyclerView.scrollToPosition(0);
+                                                    recyclerView.scrollToPosition(0); // ← add this
                                                     searchCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                                                 }
                                             }
@@ -243,7 +254,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                     });
             return insets;
         });
-
         toggleViewBtn.setOnClickListener(v -> {
             // The button is effectively a mode switch, so it gets both haptic and scale feedback
             // to make the transition feel deliberate.
@@ -405,6 +415,34 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         }
     }
 
+    private void prepareInitialHeaderPadding() {
+        // The initial library load can finish before the delayed inset/layout callbacks settle.
+        // We correct the list padding in a pre-draw pass so the first visible frame already
+        // starts below the search bar instead of jumping down a moment later.
+        View root = findViewById(android.R.id.content);
+        root.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                if (initialHeaderPaddingApplied) {
+                    root.getViewTreeObserver().removeOnPreDrawListener(this);
+                    return true;
+                }
+
+                int anchorBottom = searchCard.getBottom();
+                if (anchorBottom <= 0) {
+                    return false;
+                }
+
+                int gap = (int) (8 * getResources().getDisplayMetrics().density);
+                recyclerView.setPadding(0, anchorBottom + gap, 0, lastNavBarInset);
+                initialHeaderPaddingApplied = true;
+                root.getViewTreeObserver().removeOnPreDrawListener(this);
+                return true;
+            }
+        });
+    }
+
+
     private void customizeStatusBar() {
         // We opt into edge-to-edge layout, then adjust icon appearance based on the current theme.
         Window window = getWindow();
@@ -457,10 +495,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 filteredFiles.clear();
                 videoAdapter.notifyDataSetChanged();
                 filteredAdapter.notifyDataSetChanged();
+                recyclerView.setVisibility(View.VISIBLE);
                 if (currentState != ViewState.ALL_VIDEOS) {
                     showAllVideos();
                 }
-                Toast.makeText(this, "No video files found.", Toast.LENGTH_SHORT).show();
+                GlassUi.showToast(this, "No video files found.");
                 return;
             }
 
@@ -492,13 +531,15 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             pinLastPlayed();
             videoAdapter.notifyDataSetChanged();
             filteredAdapter.notifyDataSetChanged();
+            recyclerView.setVisibility(View.VISIBLE);
 
             if (currentState == ViewState.FOLDER_LIST || currentState == ViewState.FOLDER_CONTENTS) {
                 showFolderList();
             }
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Error loading videos: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            recyclerView.setVisibility(View.VISIBLE);
+            GlassUi.showToast(this, "Error loading videos: " + e.getMessage());
         }
     }
 
@@ -596,6 +637,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         }
     }
 
+    @UnstableApi
     @Override
     public void onPlayVideo(VideoFile videoFile) {
         // Pass the Uri and stable playback key separately so the player can resume reliably even
@@ -611,35 +653,35 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     public void onRenameVideo(VideoFile videoFile) {
         // We normalize the extension automatically so the user can rename the visible title
         // without accidentally stripping the file type.
-        EditText input = new EditText(this);
-        input.setText(videoFile.getName());
-
-        new AlertDialog.Builder(this)
-                .setTitle("Rename Video")
-                .setView(input)
-                .setPositiveButton("OK", (dialog, which) -> {
-                    String requestedName = input.getText().toString().trim();
+        GlassUi.showInputDialog(
+                this,
+                "Rename video",
+                videoFile.getName(),
+                "Enter a new name",
+                "Save",
+                value -> {
+                    String requestedName = value.trim();
                     String normalizedName = normalizeDisplayName(videoFile.getName(), requestedName);
                     if (normalizedName == null) {
-                        Toast.makeText(this, "Name cannot be empty", Toast.LENGTH_SHORT).show();
+                        GlassUi.showToast(this, "Name cannot be empty.");
                         return;
                     }
                     performRename(videoFile, normalizedName);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+                }
+        );
     }
 
     @Override
     public void onDeleteVideo(VideoFile videoFile) {
         // Delete stays behind a confirmation because these are real device files, not app-local
         // temporary entries.
-        new AlertDialog.Builder(this)
-                .setTitle("Delete Video")
-                .setMessage("Are you sure you want to delete this video?")
-                .setPositiveButton("Yes", (dialog, which) -> performDelete(videoFile))
-                .setNegativeButton("No", null)
-                .show();
+        GlassUi.showConfirmDialog(
+                this,
+                "Delete video",
+                "This will remove the selected media item from device storage.",
+                "Delete",
+                () -> performDelete(videoFile)
+        );
     }
 
     private String normalizeDisplayName(String currentName, String requestedName) {
@@ -663,16 +705,16 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             int rows = getContentResolver().delete(videoFile.getContentUri(), null, null);
             if (rows > 0) {
                 reloadAfterMutation();
-                Toast.makeText(this, "Video deleted", Toast.LENGTH_SHORT).show();
+                GlassUi.showToast(this, "Video deleted.");
             } else {
-                Toast.makeText(this, "Unable to delete video", Toast.LENGTH_SHORT).show();
+                GlassUi.showToast(this, "Unable to delete video.");
             }
             clearPendingMediaAction();
         } catch (SecurityException securityException) {
             requestScopedWriteAccess(videoFile, PendingMediaAction.DELETE, null, securityException);
         } catch (Exception e) {
             clearPendingMediaAction();
-            Toast.makeText(this, "Delete failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            GlassUi.showToast(this, "Delete failed: " + e.getMessage());
         }
     }
 
@@ -686,16 +728,16 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             int rows = getContentResolver().update(videoFile.getContentUri(), values, null, null);
             if (rows > 0) {
                 reloadAfterMutation();
-                Toast.makeText(this, "Video renamed", Toast.LENGTH_SHORT).show();
+                GlassUi.showToast(this, "Video renamed.");
             } else {
-                Toast.makeText(this, "Rename failed", Toast.LENGTH_SHORT).show();
+                GlassUi.showToast(this, "Rename failed.");
             }
             clearPendingMediaAction();
         } catch (SecurityException securityException) {
             requestScopedWriteAccess(videoFile, PendingMediaAction.RENAME, newName, securityException);
         } catch (Exception e) {
             clearPendingMediaAction();
-            Toast.makeText(this, "Rename failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            GlassUi.showToast(this, "Rename failed: " + e.getMessage());
         }
     }
 
@@ -732,14 +774,14 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
             if (intentSender == null) {
                 clearPendingMediaAction();
-                Toast.makeText(this, "This action is not supported on this device.", Toast.LENGTH_SHORT).show();
+                GlassUi.showToast(this, "This action is not supported on this device.");
                 return;
             }
 
             mediaActionLauncher.launch(new IntentSenderRequest.Builder(intentSender).build());
         } catch (Exception e) {
             clearPendingMediaAction();
-            Toast.makeText(this, "Permission request failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            GlassUi.showToast(this, "Permission request failed: " + e.getMessage());
         }
     }
 

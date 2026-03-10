@@ -13,20 +13,15 @@ import android.os.Handler;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.GestureDetector;
-import android.view.Menu;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.OptIn;
 import androidx.appcompat.app.AppCompatActivity;
@@ -40,6 +35,7 @@ import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.TrackGroup;
 import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -181,7 +177,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         videoUri = resolveVideoUri();
         if (videoUri == null) {
             Log.e("VideoError", "Invalid video URI");
-            Toast.makeText(this, "Invalid video source", Toast.LENGTH_SHORT).show();
+            GlassUi.showToast(this, "Invalid video source.");
             finish();
             return;
         }
@@ -368,53 +364,45 @@ public class VideoPlayerActivity extends AppCompatActivity {
         audioTrackButton.setOnClickListener(v -> {
             if (exoPlayer == null) return;
 
-            // Audio track switching only makes sense once the current mapped track info exists.
             DefaultTrackSelector trackSelector = (DefaultTrackSelector) exoPlayer.getTrackSelector();
-            MappingTrackSelector.MappedTrackInfo mappedTrackInfo = trackSelector.getCurrentMappedTrackInfo();
-            if (mappedTrackInfo == null) {
-                Toast.makeText(this, "No audio tracks available.", Toast.LENGTH_SHORT).show();
+            List<Tracks.Group> audioGroups = new java.util.ArrayList<>();
+            for (Tracks.Group group : exoPlayer.getCurrentTracks().getGroups()) {
+                if (group.getType() == C.TRACK_TYPE_AUDIO && group.length > 0) {
+                    audioGroups.add(group);
+                }
+            }
+            if (audioGroups.isEmpty()) {
+                GlassUi.showToast(this, "No audio tracks found.");
                 return;
             }
 
-            int audioRendererIndex = IntStream.range(0, mappedTrackInfo.getRendererCount())
-                    .filter(i -> mappedTrackInfo.getRendererType(i) == C.TRACK_TYPE_AUDIO)
-                    .findFirst()
-                    .orElse(-1);
-            if (audioRendererIndex == -1) {
-                Toast.makeText(this, "No audio track available.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            TrackGroupArray trackGroups = mappedTrackInfo.getTrackGroups(audioRendererIndex);
-            if (trackGroups.length == 0) {
-                Toast.makeText(this, "No audio tracks found.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            PopupMenu popupMenu = new PopupMenu(this, audioTrackButton);
+            java.util.ArrayList<GlassUi.ActionItem> actions = new java.util.ArrayList<>();
 
             // Show all exposed audio tracks and label them by language when possible.
-            for (int i = 0; i < trackGroups.length; i++) {
-                TrackGroup trackGroup = trackGroups.get(i);
+            for (int i = 0; i < audioGroups.size(); i++) {
+                TrackGroup trackGroup = audioGroups.get(i).getMediaTrackGroup();
                 for (int j = 0; j < trackGroup.length; j++) {
                     Format format = trackGroup.getFormat(j);
                     String lang = format.language;
                     String name = (lang == null || lang.isEmpty())
                             ? String.format(Locale.US, "Track %d", j + 1)
                             : String.format(Locale.US, "Track %d - %s", j + 1, lang);
-                    popupMenu.getMenu().add(Menu.NONE, i * 100 + j, j, name);
+                    String subtitle = buildAudioTrackSubtitle(format, audioGroups.get(i).isTrackSupported(j));
+                    actions.add(new GlassUi.ActionItem(i * 100 + j, name, subtitle));
                 }
             }
 
-            popupMenu.setOnMenuItemClickListener(item -> {
-                int groupIndex = item.getItemId() / 100;
-                int trackIndex = item.getItemId() % 100;
-                Format fmt = trackGroups.get(groupIndex).getFormat(trackIndex);
+            GlassUi.showActionSheet(this, "Audio tracks", actions, item -> {
+                int groupIndex = item.id / 100;
+                int trackIndex = item.id % 100;
+                Tracks.Group selectedGroup = audioGroups.get(groupIndex);
+                TrackGroup trackGroup = selectedGroup.getMediaTrackGroup();
+                Format fmt = trackGroup.getFormat(trackIndex);
 
-                if (isAudioFormatSupported(fmt)) {
+                if (selectedGroup.isTrackSupported(trackIndex) || isAudioFormatSupported(fmt)) {
                     // Clear any previous audio override so only the selected track remains active.
                     TrackSelectionOverride override =
-                            new TrackSelectionOverride(trackGroups.get(groupIndex), trackIndex);
+                            new TrackSelectionOverride(trackGroup, trackIndex);
                     DefaultTrackSelector.Parameters params =
                             trackSelector.buildUponParameters()
                                     .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
@@ -422,14 +410,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
                                     .addOverride(override)
                                     .build();
                     trackSelector.setParameters(params);
-                    Toast.makeText(this, "Selected: " + item.getTitle(), Toast.LENGTH_SHORT).show();
+                    GlassUi.showToast(this, "Selected: " + item.title);
                 } else {
-                    Toast.makeText(this, "Unsupported audio format.", Toast.LENGTH_SHORT).show();
+                    GlassUi.showToast(this, "Unsupported audio format.");
                 }
-                return true;
             });
-
-            popupMenu.show();
         });
     }
 
@@ -443,9 +428,24 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 "audio/vorbis",
                 "audio/opus",
                 "audio/eac3",
-                "audio/ac3"
+                "audio/eac3-joc",
+                "audio/ac3",
+                "audio/flac",
+                "audio/ac4",
+                "audio/vnd.dts",
+                "audio/vnd.dts.hd",
+                "audio/true-hd"
         );
         return supported.contains(mime);
+    }
+
+    private String buildAudioTrackSubtitle(Format format, boolean isSupported) {
+        String codec = format.sampleMimeType != null
+                ? format.sampleMimeType.replace("audio/", "").toUpperCase(Locale.US)
+                : "Audio track";
+        String channels = format.channelCount > 0 ? " • " + format.channelCount + " ch" : "";
+        String sampleRate = format.sampleRate > 0 ? " • " + format.sampleRate + " Hz" : "";
+        return isSupported ? codec + channels + sampleRate : codec + channels + sampleRate + " • limited";
     }
 
     @SuppressLint("SourceLockedOrientationActivity")
@@ -476,28 +476,29 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private void setupCropButton() {
         cropButton.setOnClickListener(v -> {
             // Resize modes are exposed as user-friendly terms rather than raw ExoPlayer constants.
-            PopupMenu popupMenu = new PopupMenu(this, cropButton);
-            popupMenu.getMenu().add(Menu.NONE, 0, 0, "Original");
-            popupMenu.getMenu().add(Menu.NONE, 1, 1, "Fill");
-            popupMenu.getMenu().add(Menu.NONE, 2, 2, "Fit");
+            java.util.ArrayList<GlassUi.ActionItem> actions = new java.util.ArrayList<>();
+            actions.add(new GlassUi.ActionItem(0, "Original", "Preserve the source framing"));
+            actions.add(new GlassUi.ActionItem(1, "Fill", "Stretch to fill the player bounds"));
+            actions.add(new GlassUi.ActionItem(2, "Fit", "Zoom to cover while keeping aspect"));
 
-            popupMenu.setOnMenuItemClickListener(item -> {
-                switch (item.getItemId()) {
+            GlassUi.showActionSheet(this, "Crop mode", actions, item -> {
+                switch (item.id) {
                     case 0:
                         applyCropping(CropType.ORIGINAL);
-                        return true;
+                        GlassUi.showToast(this, "Crop mode: Original");
+                        break;
                     case 1:
                         applyCropping(CropType.FILL);
-                        return true;
+                        GlassUi.showToast(this, "Crop mode: Fill");
+                        break;
                     case 2:
                         applyCropping(CropType.FIT);
-                        return true;
+                        GlassUi.showToast(this, "Crop mode: Fit");
+                        break;
                     default:
-                        return false;
+                        break;
                 }
             });
-
-            popupMenu.show();
         });
     }
 

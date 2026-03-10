@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="24dp"
+    android:layout_marginEnd="24dp"
+    android:background="@drawable/glass_surface_soft_bg"
+    android:elevation="8dp">
+
+    <TextView
+        android:id="@+id/toast_message"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:maxWidth="280dp"
+        android:paddingStart="18dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="18dp"
+        android:paddingBottom="14dp"
+        android:textColor="#F4F5F8"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif-medium" />
+
+</FrameLayout>

@@ -23,4 +23,14 @@
         <item name="android:statusBarColor">@android:color/transparent</item> <!-- Transparent status bar -->
         <item name="android:windowTranslucentNavigation">true</item>
     </style>
+
+    <style name="GlassBottomSheetDialogTheme" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/GlassBottomSheetStyle</item>
+    </style>
+
+    <style name="GlassBottomSheetStyle" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="backgroundTint">@android:color/transparent</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Material3.Corner.ExtraLarge</item>
+    </style>
 </resources>

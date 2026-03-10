@@ -6,24 +6,23 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.PopupMenu;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.OptIn;
 import androidx.annotation.RequiresApi;
-import androidx.appcompat.app.AlertDialog;
 import androidx.media3.common.util.UnstableApi;
 import androidx.palette.graphics.Palette;
 import androidx.recyclerview.widget.RecyclerView;
@@ -33,39 +32,42 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
 
-import java.io.IOException;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHolder> {
 
-    // The adapter delegates "real" actions back to the activity so storage mutations,
-    // navigation, and permission flows stay centralized in one place.
     public interface Listener {
         void onPlayVideo(VideoFile videoFile);
         void onRenameVideo(VideoFile videoFile);
         void onDeleteVideo(VideoFile videoFile);
     }
 
-    private final Context context;
+    private static final int ACTION_RENAME = 1;
+    private static final int ACTION_SHARE  = 2;
+    private static final int ACTION_DELETE = 3;
+    private static final int ACTION_INFO   = 4;
+
+    private final Context         context;
     private final List<VideoFile> videoFiles;
-    private final Listener listener;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ExecutorService executorService = Executors.newSingleThreadExecutor();
+    private final Listener        listener;
+    private final Handler         mainHandler     = new Handler(Looper.getMainLooper());
+    private final ExecutorService executorService = Executors.newFixedThreadPool(2);
 
     public VideoAdapter(Context context, List<VideoFile> videoFiles, Listener listener) {
-        this.context = context;
+        this.context    = context;
         this.videoFiles = videoFiles;
-        this.listener = listener;
+        this.listener   = listener;
     }
 
     @NonNull
     @Override
     public VideoViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_video, parent, false);
+        View view = LayoutInflater.from(parent.getContext())
+                .inflate(R.layout.item_video, parent, false);
         return new VideoViewHolder(view);
     }
 
@@ -73,17 +75,15 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     @OptIn(markerClass = UnstableApi.class)
     @Override
     public void onBindViewHolder(@NonNull VideoViewHolder holder, int position) {
-        // Bind against a content Uri instead of a raw file path so the adapter continues to work
-        // under scoped storage on Android 10+.
         VideoFile videoFile = videoFiles.get(position);
-        Uri videoUri = videoFile.getContentUri();
+        Uri       videoUri  = videoFile.getContentUri();
 
         holder.videoName.setText(videoFile.getName());
 
+        // ── Playback progress bar ────────────────────────────────────
         if (holder.videoProgress != null) {
-            // The small progress bar in the thumbnail is purely library state. It is independent
-            // from ExoPlayer and reads from our persisted playback progress cache.
-            float fraction = PlaybackPrefs.getInstance(context).getProgressFraction(videoFile.getPlaybackKey());
+            float fraction = PlaybackPrefs.getInstance(context)
+                    .getProgressFraction(videoFile.getPlaybackKey());
             if (fraction > 0f) {
                 holder.videoProgress.setVisibility(View.VISIBLE);
                 holder.videoProgress.setPivotX(0f);
@@ -96,8 +96,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
         holder.cardTint.setBackgroundColor(Color.TRANSPARENT);
 
-        // Glide handles thumbnail extraction from the content Uri, while Palette gives each
-        // card a subtle color identity based on the actual video frame.
+        // ── Thumbnail + Palette tint ─────────────────────────────────
         Glide.with(context)
                 .asBitmap()
                 .load(videoUri)
@@ -108,33 +107,27 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                     public void onResourceReady(@NonNull Bitmap resource,
                                                 Transition<? super Bitmap> transition) {
                         holder.videoThumbnail.setImageBitmap(resource);
-
                         Palette.from(resource).generate(palette -> {
                             if (palette == null) return;
-
                             Palette.Swatch swatch = palette.getVibrantSwatch();
                             if (swatch == null) swatch = palette.getMutedSwatch();
                             if (swatch == null) swatch = palette.getDominantSwatch();
                             if (swatch == null) return;
-
-                            int rgb = swatch.getRgb();
+                            int     rgb = swatch.getRgb();
                             float[] hsv = new float[3];
                             Color.colorToHSV(rgb, hsv);
                             if (hsv[2] < 0.15f) return;
-
-                            int r = Color.red(rgb);
-                            int g = Color.green(rgb);
-                            int b = Color.blue(rgb);
+                            int r = Color.red(rgb), g = Color.green(rgb), b = Color.blue(rgb);
                             android.graphics.drawable.GradientDrawable gradient =
                                     new android.graphics.drawable.GradientDrawable(
                                             android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
                                             new int[]{
                                                     Color.argb(60, r, g, b),
                                                     Color.argb(20, r, g, b),
-                                                    Color.argb(0, r, g, b)
-                                            }
-                                    );
-                            gradient.setCornerRadius(20 * context.getResources().getDisplayMetrics().density);
+                                                    Color.argb(0,  r, g, b)
+                                            });
+                            gradient.setCornerRadius(
+                                    20 * context.getResources().getDisplayMetrics().density);
                             holder.cardTint.setBackground(gradient);
                         });
                     }
@@ -148,56 +141,45 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
         holder.videoSize.setText(getFileSize(videoFile.getSizeBytes()));
 
-        // Metadata extraction is intentionally off the UI thread because MediaMetadataRetriever
-        // can block on slower storage and would otherwise make scrolling feel heavy.
+        // ── Metadata extraction — off UI thread ──────────────────────
         executorService.execute(() -> {
-            String duration = formatDuration(getVideoDuration(videoUri));
-            String quality = "Unknown";
-
-            try {
-                Map<String, String> videoDetails = getVideoDetails(videoUri);
-                quality = videoDetails.getOrDefault("Quality", quality);
-            } catch (IOException e) {
-                Log.e("VideoAdapter", "Error retrieving video details", e);
-            }
-
-            String finalQuality = quality;
+            MediaInfoSnapshot snapshot = extractMediaInfo(videoFile);
             mainHandler.post(() -> {
-                holder.videoDuration.setText(duration);
-                holder.videoQuality.setText(finalQuality);
+                holder.videoDuration.setText(snapshot.durationLabel);
+                holder.videoQuality.setText(snapshot.qualityLabel);
             });
         });
 
-        // A normal tap means "open in player". The activity decides how to launch playback.
+        // ── Click — play ─────────────────────────────────────────────
         holder.itemView.setOnClickListener(v -> listener.onPlayVideo(videoFile));
 
-        // Long-press keeps secondary actions discoverable without overcrowding each card.
+        // ── Long-press — action sheet ────────────────────────────────
         holder.itemView.setOnLongClickListener(v -> {
-            PopupMenu popupMenu = new PopupMenu(context, holder.itemView, Gravity.END);
-            popupMenu.getMenuInflater().inflate(R.menu.video_popup_menu, popupMenu.getMenu());
-            popupMenu.setOnMenuItemClickListener(item -> {
-                int itemId = item.getItemId();
-                if (itemId == R.id.menu_delete) {
+            List<GlassUi.ActionItem> actions = new ArrayList<>();
+            actions.add(new GlassUi.ActionItem(ACTION_RENAME, "Rename",
+                    "Update the media title shown by the system library"));
+            actions.add(new GlassUi.ActionItem(ACTION_SHARE, "Share",
+                    "Send the video through a scoped-storage safe share intent"));
+            actions.add(new GlassUi.ActionItem(ACTION_DELETE, "Delete",
+                    "Remove the media item from device storage"));
+            actions.add(new GlassUi.ActionItem(ACTION_INFO, "Detailed info",
+                    "Inspect container, codecs, bitrate, resolution, and more"));
+
+            GlassUi.showActionSheet(context, videoFile.getName(), actions, item -> {
+                if (item.id == ACTION_DELETE) {
                     listener.onDeleteVideo(videoFile);
-                    return true;
-                } else if (itemId == R.id.menu_rename) {
+                } else if (item.id == ACTION_RENAME) {
                     listener.onRenameVideo(videoFile);
-                    return true;
-                } else if (itemId == R.id.menu_info) {
-                    try {
-                        showVideoInfo(videoFile);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                    return true;
-                } else if (itemId == R.id.menu_share) {
+                } else if (item.id == ACTION_INFO) {
+                    // Off main thread — avoids ANR on large files
+                    executorService.execute(() -> {
+                        MediaInfoSnapshot snapshot = extractMediaInfo(videoFile);
+                        mainHandler.post(() -> showVideoInfo(videoFile, snapshot));
+                    });
+                } else if (item.id == ACTION_SHARE) {
                     shareVideo(videoFile);
-                    return true;
-                } else {
-                    return false;
                 }
             });
-            popupMenu.show();
             return true;
         });
     }
@@ -206,6 +188,8 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     public int getItemCount() {
         return videoFiles.size();
     }
+
+    // ── ViewHolder ───────────────────────────────────────────────────
 
     public static class VideoViewHolder extends RecyclerView.ViewHolder {
         android.widget.ImageView videoThumbnail;
@@ -217,147 +201,454 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         public VideoViewHolder(@NonNull View itemView) {
             super(itemView);
             videoThumbnail = itemView.findViewById(R.id.video_thumbnail);
-            videoName = itemView.findViewById(R.id.video_name);
-            videoSize = itemView.findViewById(R.id.video_size);
-            videoDuration = itemView.findViewById(R.id.video_duration);
-            videoQuality = itemView.findViewById(R.id.video_quality);
-            cardTint = itemView.findViewById(R.id.card_tint);
-            videoProgress = itemView.findViewById(R.id.video_progress);
+            videoName      = itemView.findViewById(R.id.video_name);
+            videoSize      = itemView.findViewById(R.id.video_size);
+            videoDuration  = itemView.findViewById(R.id.video_duration);
+            videoQuality   = itemView.findViewById(R.id.video_quality);
+            cardTint       = itemView.findViewById(R.id.card_tint);
+            videoProgress  = itemView.findViewById(R.id.video_progress);
         }
     }
 
+    // ── Media info snapshot ──────────────────────────────────────────
+
+    private static final class MediaInfoSnapshot {
+        String durationLabel     = "00:00";
+        String qualityLabel      = "Unknown";
+        String resolutionLabel   = "Unknown";
+        String containerLabel    = "Unknown";
+        String videoCodecLabel   = "Unknown";
+        String audioCodecLabel   = "Unknown";
+        String bitrateLabel      = "Unknown";
+        String fileSizeLabel     = "Unknown";
+        String folderLabel       = "Unknown";
+        String frameRateLabel    = "Unknown";
+        String audioDetailsLabel = "Unknown";
+        String uriLabel          = "Unknown";
+    }
+
+    // ── Core extraction ──────────────────────────────────────────────
+
+    private MediaInfoSnapshot extractMediaInfo(VideoFile videoFile) {
+        MediaInfoSnapshot      snapshot  = new MediaInfoSnapshot();
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        MediaExtractor         extractor = new MediaExtractor();
+
+        snapshot.fileSizeLabel = getFileSize(videoFile.getSizeBytes());
+        snapshot.folderLabel   = videoFile.getFolderName() != null
+                ? videoFile.getFolderName() : "Unknown";
+        snapshot.uriLabel      = videoFile.getContentUri().toString();
+
+        try {
+            Uri uri = videoFile.getContentUri();
+            retriever.setDataSource(context, uri);
+            extractor.setDataSource(context, uri, null);
+
+            // Duration
+            snapshot.durationLabel = formatDuration(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+
+            boolean hasAudio = "yes".equalsIgnoreCase(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO));
+
+            String containerMime = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_MIMETYPE);
+            snapshot.containerLabel = prettifyContainer(containerMime, videoFile.getName());
+
+            // Base resolution
+            int width    = parseInt(retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            int height   = parseInt(retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            int rotation = parseInt(retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
+            if (rotation == 90 || rotation == 270) {
+                int t = width; width = height; height = t;
+            }
+
+            long overallBitrate = parseLong(retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_BITRATE));
+            if (overallBitrate > 0) snapshot.bitrateLabel = formatBitrate(overallBitrate);
+
+            // Per-track scan
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.containsKey(MediaFormat.KEY_MIME)
+                        ? format.getString(MediaFormat.KEY_MIME) : null;
+
+                if (mime != null && mime.startsWith("video/")) {
+                    snapshot.videoCodecLabel = prettifyCodec(mime);
+
+                    if (format.containsKey(MediaFormat.KEY_WIDTH))
+                        width  = format.getInteger(MediaFormat.KEY_WIDTH);
+                    if (format.containsKey(MediaFormat.KEY_HEIGHT))
+                        height = format.getInteger(MediaFormat.KEY_HEIGHT);
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                            && format.containsKey(MediaFormat.KEY_ROTATION)) {
+                        int r = format.getInteger(MediaFormat.KEY_ROTATION);
+                        if (r == 90 || r == 270) {
+                            int t = width; width = height; height = t;
+                        }
+                    }
+
+                    // Frame rate — extractor first, capture rate fallback
+                    if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                        snapshot.frameRateLabel =
+                                format.getInteger(MediaFormat.KEY_FRAME_RATE) + " fps";
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        String cr = retriever.extractMetadata(
+                                MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
+                        if (cr != null && !cr.isEmpty()) {
+                            try {
+                                snapshot.frameRateLabel = String.format(
+                                        Locale.US, "%.0f fps", Float.parseFloat(cr));
+                            } catch (Exception ignored) {}
+                        }
+                    }
+
+                    if (format.containsKey(MediaFormat.KEY_BIT_RATE))
+                        snapshot.bitrateLabel =
+                                formatBitrate(format.getInteger(MediaFormat.KEY_BIT_RATE));
+
+                } else if ("Unknown".equals(snapshot.audioCodecLabel)
+                        && looksLikeAudioTrack(mime, format)) {
+                    snapshot.audioCodecLabel   = prettifyCodec(mime);
+                    snapshot.audioDetailsLabel = buildAudioDetails(format);
+                }
+            }
+
+            // ── Audio fallback chain ─────────────────────────────────
+            if (hasAudio && "Unknown".equals(snapshot.audioCodecLabel)) {
+
+                // 1. Filename keyword hints
+                String fileHint    = fallbackAudioCodec(videoFile.getName(), containerMime);
+                boolean hintUseful = !fileHint.equals("Detected but not reported")
+                        && !fileHint.contains("unsupported");
+
+                if (hintUseful) {
+                    snapshot.audioCodecLabel = fileHint;
+
+                } else if ("MKV".equals(snapshot.containerLabel)
+                        || "video/x-matroska".equals(containerMime)) {
+
+                    // 2. Raw EBML byte scan — most reliable for E-AC-3/DTS/TrueHD in MKV
+                    String scanned = scanMkvAudioCodec(videoFile);
+                    snapshot.audioCodecLabel = scanned != null ? scanned : fileHint;
+
+                } else {
+                    snapshot.audioCodecLabel = fileHint;
+                }
+            }
+
+            // 3. Second extractor pass — KEY_CODECS_STRING on API 29+
+            if ("Unknown".equals(snapshot.audioCodecLabel)
+                    || "Detected but not reported".equals(snapshot.audioCodecLabel)) {
+                for (int i = 0; i < extractor.getTrackCount(); i++) {
+                    MediaFormat format = extractor.getTrackFormat(i);
+                    String mime = format.containsKey(MediaFormat.KEY_MIME)
+                            ? format.getString(MediaFormat.KEY_MIME) : null;
+                    if (!looksLikeAudioTrack(mime, format)) continue;
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                            && format.containsKey(MediaFormat.KEY_CODECS_STRING)) {
+                        String cs = format.getString(MediaFormat.KEY_CODECS_STRING);
+                        if (cs != null && !cs.isEmpty()) {
+                            snapshot.audioCodecLabel   = cs.toUpperCase(Locale.US);
+                            snapshot.audioDetailsLabel = buildAudioDetails(format);
+                            break;
+                        }
+                    }
+                    snapshot.audioDetailsLabel = buildAudioDetails(format);
+                    if ("Unknown".equals(snapshot.audioCodecLabel))
+                        snapshot.audioCodecLabel = "Audio (unsupported by system parser)";
+                    break;
+                }
+            }
+
+            if (hasAudio && "Unknown".equals(snapshot.audioDetailsLabel))
+                snapshot.audioDetailsLabel = "Audio track present";
+
+            // Resolution + quality
+            if (width > 0 && height > 0) {
+                snapshot.resolutionLabel = String.format(Locale.US, "%d x %d", width, height);
+                snapshot.qualityLabel    = getQualityLabel(width, height);
+            }
+
+        } catch (Exception e) {
+            Log.e("VideoAdapter", "extractMediaInfo failed", e);
+        } finally {
+            try { retriever.release(); } catch (Exception ignored) {}
+            try { extractor.release(); } catch (Exception ignored) {}
+        }
+        // FFmpeg fallback for anything still unknown
+        fillUnknownsWithFfmpeg(videoFile, snapshot);
+
+        return snapshot;
+    }
+
+    // ── Raw EBML scan for MKV audio codec IDs ───────────────────────
+
+    private String scanMkvAudioCodec(VideoFile videoFile) {
+        try (java.io.InputStream is = context.getContentResolver()
+                .openInputStream(videoFile.getContentUri())) {
+            if (is == null) return null;
+
+            // 256 KB covers even large MKV headers with many tracks
+            byte[] buf  = new byte[262144];
+            int    read = 0, chunk;
+            while (read < buf.length
+                    && (chunk = is.read(buf, read, buf.length - read)) != -1) {
+                read += chunk;
+            }
+
+            String raw = new String(buf, 0, read,
+                    java.nio.charset.StandardCharsets.ISO_8859_1);
+
+            // Ordered most-specific first to avoid A_AC3 matching before A_EAC3
+            if (raw.contains("A_TRUEHD"))  return "TrueHD";
+            if (raw.contains("A_EAC3"))    return "E-AC-3";
+            if (raw.contains("A_AC3"))     return "AC-3";
+            if (raw.contains("A_DTS"))     return "DTS";
+            if (raw.contains("A_AAC"))     return "AAC";
+            if (raw.contains("A_FLAC"))    return "FLAC";
+            if (raw.contains("A_OPUS"))    return "Opus";
+            if (raw.contains("A_VORBIS"))  return "Vorbis";
+            if (raw.contains("A_MPEG/L3")) return "MP3";
+            if (raw.contains("A_PCM"))     return "PCM";
+
+        } catch (Exception e) {
+            Log.e("VideoAdapter", "MKV byte scan failed", e);
+        }
+        return null;
+    }
+
+    // ── Info dialog ──────────────────────────────────────────────────
+
+    private void showVideoInfo(VideoFile videoFile, MediaInfoSnapshot snapshot) {
+        List<GlassUi.InfoItem> rows = new ArrayList<>();
+        rows.add(new GlassUi.InfoItem("Name",            videoFile.getName()));
+        rows.add(new GlassUi.InfoItem("Container",       snapshot.containerLabel));
+        rows.add(new GlassUi.InfoItem("Video codec",     snapshot.videoCodecLabel));
+        rows.add(new GlassUi.InfoItem("Audio codec",     snapshot.audioCodecLabel));
+        rows.add(new GlassUi.InfoItem("Resolution",      snapshot.resolutionLabel));
+        rows.add(new GlassUi.InfoItem("Display quality", snapshot.qualityLabel));
+        rows.add(new GlassUi.InfoItem("Duration",        snapshot.durationLabel));
+        rows.add(new GlassUi.InfoItem("Bitrate",         snapshot.bitrateLabel));
+        rows.add(new GlassUi.InfoItem("Frame rate",      snapshot.frameRateLabel));
+        rows.add(new GlassUi.InfoItem("Audio details",   snapshot.audioDetailsLabel));
+        rows.add(new GlassUi.InfoItem("File size",       snapshot.fileSizeLabel));
+        rows.add(new GlassUi.InfoItem("Folder",          snapshot.folderLabel));
+        rows.add(new GlassUi.InfoItem("Content Uri",     snapshot.uriLabel));
+        GlassUi.showInfoDialog(context, "Detailed media info", rows);
+    }
+
+    // ── Audio helpers ────────────────────────────────────────────────
+
+    private String buildAudioDetails(MediaFormat format) {
+        List<String> parts = new ArrayList<>();
+        if (format.containsKey(MediaFormat.KEY_MIME)) {
+            String label = prettifyCodec(format.getString(MediaFormat.KEY_MIME));
+            if (!"Unknown".equals(label)) parts.add(label);
+        }
+        if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
+            parts.add(format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) + " ch");
+        if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE))
+            parts.add(format.getInteger(MediaFormat.KEY_SAMPLE_RATE) + " Hz");
+        return parts.isEmpty() ? "Unknown" : TextUtils.join(" • ", parts);
+    }
+
+    private boolean looksLikeAudioTrack(String mime, MediaFormat format) {
+        if (mime != null && mime.startsWith("audio/")) return true;
+        return format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)
+                || format.containsKey(MediaFormat.KEY_SAMPLE_RATE);
+    }
+
+    private String fallbackAudioCodec(String fileName, String containerMime) {
+        String n = fileName.toLowerCase(Locale.US);
+        if (n.contains("truehd")  || n.contains("true-hd"))                   return "TrueHD";
+        if (n.contains("eac3")    || n.contains("ec3") || n.contains("e-ac-3")
+                || n.contains("ddplus") || n.contains("dd+"))                  return "E-AC-3";
+        if (n.contains("ac3")     || n.contains("dolby digital")
+                || n.contains(" dd ")   || n.contains(".dd."))                 return "AC-3";
+        if (n.contains("dts-hd")  || n.contains("dtshd"))                     return "DTS-HD";
+        if (n.contains("dts"))                                                 return "DTS";
+        if (n.contains("aac"))                                                 return "AAC";
+        if (n.contains("flac"))                                                return "FLAC";
+        if (n.contains("opus"))                                                return "Opus";
+        if ("video/x-matroska".equals(containerMime))
+            return "Audio (MKV — unsupported by system parser)";
+        if ("video/mp4".equals(containerMime))
+            return "AAC (assumed)";
+        return "Detected but not reported";
+    }
+
+    // ── Utility ──────────────────────────────────────────────────────
+
     @SuppressLint("DefaultLocale")
-    private String getFileSize(long sizeInBytes) {
-        if (sizeInBytes <= 0) return "Unknown";
-        if (sizeInBytes < 1024) return sizeInBytes + " B";
-        int exp = (int) (Math.log(sizeInBytes) / Math.log(1024));
+    private String getFileSize(long bytes) {
+        if (bytes <= 0) return "Unknown";
+        if (bytes < 1024) return bytes + " B";
+        int    exp   = (int) (Math.log(bytes) / Math.log(1024));
         String units = "KMGTPE".charAt(exp - 1) + "B";
-        return String.format("%.1f %s", sizeInBytes / Math.pow(1024, exp), units);
+        return String.format(Locale.US, "%.1f %s", bytes / Math.pow(1024, exp), units);
     }
 
-    private String getVideoDuration(Uri uri) {
-        // MediaMetadataRetriever still works well here as a lightweight way to read duration
-        // without having to prepare a player instance for each list row.
-        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-        try {
-            retriever.setDataSource(context, uri);
-            String duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-            return String.valueOf(duration != null ? Long.parseLong(duration) : 0);
-        } catch (Exception e) {
-            Log.e("VideoAdapter", "Error reading duration", e);
-            return String.valueOf(0);
-        } finally {
-            try {
-                retriever.release();
-            } catch (Exception e) {
-                Log.e("VideoAdapter", "Error releasing retriever", e);
-            }
-        }
+    private int parseInt(String v) {
+        if (v == null || v.isEmpty()) return 0;
+        try { return Integer.parseInt(v); } catch (Exception e) { return 0; }
     }
 
-    private void showVideoInfo(VideoFile videoFile) throws IOException {
-        // This dialog intentionally combines stored metadata (name, folder, size) with live
-        // retriever data so the user gets a complete snapshot in one place.
-        AlertDialog.Builder builder = new AlertDialog.Builder(context);
-        builder.setTitle("Video Information");
-        StringBuilder info = new StringBuilder();
-        info.append("Name: ").append(videoFile.getName()).append("\n");
-        info.append("Uri: ").append(videoFile.getContentUri()).append("\n");
-        if (videoFile.getFolderName() != null && !videoFile.getFolderName().isEmpty()) {
-            info.append("Folder: ").append(videoFile.getFolderName()).append("\n");
-        }
-        info.append("Duration: ").append(formatDuration(getVideoDuration(videoFile.getContentUri()))).append("\n");
-        info.append("Size: ").append(getFileSize(videoFile.getSizeBytes())).append("\n");
-        Map<String, String> videoDetails = getVideoDetails(videoFile.getContentUri());
-        info.append("Video Codec: ").append(videoDetails.get("Codec")).append("\n");
-        info.append("Video Resolution: ").append(videoDetails.get("Resolution")).append("\n");
-        info.append("Video Bitrate: ").append(videoDetails.get("Bitrate")).append("\n");
-        builder.setMessage(info.toString());
-        builder.setPositiveButton("OK", (dialog, which) -> dialog.dismiss());
-        builder.show();
+    private long parseLong(String v) {
+        if (v == null || v.isEmpty()) return 0L;
+        try { return Long.parseLong(v); } catch (Exception e) { return 0L; }
     }
 
-    @SuppressLint("DefaultLocale")
-    private Map<String, String> getVideoDetails(Uri uri) throws IOException {
-        // The method returns strings rather than a dedicated model to keep the info dialog and
-        // row binding code simple; this is just transient display data.
-        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-        Map<String, String> videoDetails = new HashMap<>();
-        try {
-            retriever.setDataSource(context, uri);
-            String videoCodec = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE);
-            videoDetails.put("Codec", videoCodec != null && videoCodec.contains("/")
-                    ? videoCodec.split("/")[1]
-                    : "Unknown");
-            String width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
-            String height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
-            if (width != null && height != null) {
-                int w = Integer.parseInt(width);
-                int h = Integer.parseInt(height);
-                videoDetails.put("Resolution", w + " x " + h);
-                videoDetails.put("Quality", getQualityLabel(Math.min(w, h)));
-            } else {
-                videoDetails.put("Resolution", "Unknown");
-                videoDetails.put("Quality", "Unknown");
-            }
-            String bitrate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE);
-            if (bitrate != null) {
-                double bitrateMbps = Long.parseLong(bitrate) / 1_000_000.0;
-                videoDetails.put("Bitrate", String.format("%.2f Mbps", bitrateMbps));
-            } else {
-                videoDetails.put("Bitrate", "Unknown");
-            }
-        } catch (Exception e) {
-            Log.e("VideoAdapter", "Error reading details", e);
-        } finally {
-            try {
-                retriever.release();
-            } catch (Exception e) {
-                Log.e("VideoAdapter", "Error releasing retriever", e);
-            }
-        }
-        return videoDetails;
-    }
-
-    private String getQualityLabel(int height) {
-        if (height >= 0 && height <= 180) return "144p";
-        else if (height <= 280) return "240p";
-        else if (height <= 400) return "360p";
-        else if (height <= 500) return "480p";
-        else if (height <= 800) return "720p";
-        else if (height <= 1120) return "1080p";
-        else if (height <= 1580) return "2K";
-        else if (height <= 2400) return "4K";
-        else return "4K+";
+    private String formatBitrate(long bps) {
+        if (bps <= 0) return "Unknown";
+        double mbps = bps / 1_000_000.0;
+        return mbps >= 1d
+                ? String.format(Locale.US, "%.2f Mbps", mbps)
+                : String.format(Locale.US, "%.0f kbps", bps / 1000.0);
     }
 
     @SuppressLint("DefaultLocale")
     private String formatDuration(String duration) {
         if (duration == null) return "Unknown";
-        long durationMs = Long.parseLong(duration);
-        long hours = (durationMs / 1000) / 3600;
-        long minutes = ((durationMs / 1000) % 3600) / 60;
-        long seconds = (durationMs / 1000) % 60;
-        if (hours > 0) return String.format("%02d:%02d:%02d", hours, minutes, seconds);
-        else return String.format("%02d:%02d", minutes, seconds);
+        long ms      = parseLong(duration);
+        long hours   = (ms / 1000) / 3600;
+        long minutes = ((ms / 1000) % 3600) / 60;
+        long seconds = (ms / 1000) % 60;
+        return hours > 0
+                ? String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+                : String.format(Locale.US, "%02d:%02d", minutes, seconds);
     }
 
+    private String prettifyContainer(String mime, String fileName) {
+        String ext = "";
+        int dot = fileName.lastIndexOf('.');
+        if (dot > 0 && dot < fileName.length() - 1)
+            ext = fileName.substring(dot + 1).toUpperCase(Locale.US);
+        if (mime == null || mime.isEmpty()) return ext.isEmpty() ? "Unknown" : ext;
+        switch (mime) {
+            case "video/x-matroska": case "audio/x-matroska": return "MKV";
+            case "video/mp4":        case "audio/mp4":         return "MP4";
+            case "video/webm":                                 return "WEBM";
+            case "video/3gpp":                                 return "3GP";
+            default:
+                return ext.isEmpty()
+                        ? mime.replace("video/", "").replace("audio/", "")
+                        .toUpperCase(Locale.US)
+                        : ext;
+        }
+    }
+
+    private void fillUnknownsWithFfmpeg(VideoFile videoFile, MediaInfoSnapshot snapshot) {
+        wseemann.media.FFmpegMediaMetadataRetriever ff =
+                new wseemann.media.FFmpegMediaMetadataRetriever();
+        try {
+            ff.setDataSource(context, videoFile.getContentUri());
+
+            // Audio codec
+            if ("Unknown".equals(snapshot.audioCodecLabel)
+                    || snapshot.audioCodecLabel.contains("unsupported")
+                    || snapshot.audioCodecLabel.contains("parser")
+                    || snapshot.audioCodecLabel.contains("MKV")) {
+                String codec = ff.extractMetadata(
+                        wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_AUDIO_CODEC);
+                if (codec != null && !codec.isEmpty()) {
+                    snapshot.audioCodecLabel   = codec.toUpperCase(Locale.US);
+                    snapshot.audioDetailsLabel = codec.toUpperCase(Locale.US);
+                }
+            }
+
+            // Frame rate
+            if ("Unknown".equals(snapshot.frameRateLabel)) {
+                String fps = ff.extractMetadata(
+                        wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_FRAMERATE);
+                if (fps != null && !fps.isEmpty()) {
+                    try {
+                        if (fps.contains("/")) {
+                            String[] p = fps.split("/");
+                            float f = Float.parseFloat(p[0]) / Float.parseFloat(p[1]);
+                            snapshot.frameRateLabel = String.format(Locale.US, "%.2f fps", f);
+                        } else {
+                            snapshot.frameRateLabel = fps + " fps";
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            // Video codec fallback
+            if ("Unknown".equals(snapshot.videoCodecLabel)) {
+                String codec = ff.extractMetadata(
+                        wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_CODEC);
+                if (codec != null && !codec.isEmpty()) {
+                    snapshot.videoCodecLabel = codec.toUpperCase(Locale.US);
+                }
+            }
+
+        } catch (Exception e) {
+            Log.e("VideoAdapter", "FFmpeg metadata failed", e);
+        } finally {
+            try { ff.release(); } catch (Exception ignored) {}
+        }
+    }
+
+    private String prettifyCodec(String mime) {
+        if (mime == null || mime.isEmpty()) return "Unknown";
+        switch (mime) {
+            case "video/avc":            return "AVC (H.264)";
+            case "video/hevc":           return "HEVC (H.265)";
+            case "video/mp4v-es":        return "MPEG-4 Visual";
+            case "video/x-vnd.on2.vp9": return "VP9";
+            case "video/av01":           return "AV1";
+            case "audio/mp4a-latm":      return "AAC";
+            case "audio/ac3":            return "AC-3";
+            case "audio/eac3":           return "E-AC-3";
+            case "audio/eac3-joc":       return "E-AC-3 JOC";
+            case "audio/ac4":            return "AC-4";
+            case "audio/vnd.dts":
+            case "audio/vnd.dts.hd":     return "DTS";
+            case "audio/true-hd":        return "TrueHD";
+            case "audio/opus":           return "Opus";
+            case "audio/vorbis":         return "Vorbis";
+            case "audio/mpeg":           return "MP3";
+            case "audio/flac":           return "FLAC";
+            default:
+                String n = mime.contains("/")
+                        ? mime.substring(mime.indexOf('/') + 1) : mime;
+                return n.toUpperCase(Locale.US);
+        }
+    }
+
+    private String getQualityLabel(int w, int h) {
+        int d = Math.max(w, h);
+        if (d >= 3840) return "4K";
+        if (d >= 2560) return "2K";
+        if (d >= 1920) return "1080p";
+        if (d >= 1280) return "720p";
+        if (d >= 854)  return "480p";
+        if (d >= 640)  return "360p";
+        if (d >= 426)  return "240p";
+        return "144p";
+    }
+
+    // ── Share ────────────────────────────────────────────────────────
+
     private void shareVideo(VideoFile videoFile) {
-        // Sharing through the content Uri plus ClipData is the scoped-storage-safe way to give
-        // another app temporary access to this media item.
-        Intent shareIntent = new Intent(Intent.ACTION_SEND);
-        shareIntent.setType("video/*");
-        shareIntent.putExtra(Intent.EXTRA_STREAM, videoFile.getContentUri());
-        shareIntent.setClipData(ClipData.newUri(
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("video/*");
+        intent.putExtra(Intent.EXTRA_STREAM, videoFile.getContentUri());
+        intent.setClipData(ClipData.newUri(
                 context.getContentResolver(),
                 videoFile.getName(),
-                videoFile.getContentUri()
-        ));
-        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                videoFile.getContentUri()));
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
-            context.startActivity(Intent.createChooser(shareIntent, "Share video via"));
+            context.startActivity(Intent.createChooser(intent, "Share video via"));
         } catch (Exception e) {
-            Toast.makeText(context, "No app available to share this video.", Toast.LENGTH_SHORT).show();
+            GlassUi.showToast(context, "No app available to share this video.");
         }
     }
 }
