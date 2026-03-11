@@ -105,10 +105,26 @@ Repository templates are included for:
 
 Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
+Signed release artifacts tracked in this repository:
+
+- `app/release/app-arm64-v8a-release.apk`
+- `app/release/app-armeabi-v7a-release.apk`
+
+For most modern phones, use the `arm64-v8a` build.
+
 ## Current version
 
-- `versionName`: `8.7`
+- `versionName`: `9.2`
 - `versionCode`: `87`
+
+## Release packaging
+
+Release builds are now published as split APKs instead of one universal APK.
+
+- `arm64-v8a` release APK: optimized for most current Android phones
+- `armeabi-v7a` release APK: fallback for older 32-bit devices
+
+This keeps the release size near the 18-20 MB range without removing player features or codec support.
 
 ## Roadmap ideas
 
