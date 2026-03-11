@@ -19,3 +19,11 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Preserve app activities referenced by the manifest and intent routing.
+-keep class com.example.cinestream.** extends android.app.Activity { *; }
+-keep class com.example.cinestream.** extends androidx.appcompat.app.AppCompatActivity { *; }
+
+# Keep the FFmpeg metadata retriever entry points that bridge into native code.
+-keep class wseemann.media.FFmpegMediaMetadataRetriever { *; }
+-keep class wseemann.media.Metadata { *; }
