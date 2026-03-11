@@ -203,6 +203,67 @@ public final class GlassUi {
         }
     }
 
+    public static void showDualActionSheet(
+            Context context,
+            String title,
+            String leftTitle,
+            List<ActionItem> leftItems,
+            ActionCallback leftCallback,
+            String rightTitle,
+            List<ActionItem> rightItems,
+            ActionCallback rightCallback
+    ) {
+        BottomSheetDialog dialog = new BottomSheetDialog(context, R.style.GlassBottomSheetDialogTheme);
+        View view = LayoutInflater.from(context).inflate(R.layout.bottom_sheet_glass_dual_actions, null, false);
+        TextView titleView = view.findViewById(R.id.sheet_title);
+        TextView leftTitleView = view.findViewById(R.id.left_title);
+        TextView rightTitleView = view.findViewById(R.id.right_title);
+        RecyclerView leftRecyclerView = view.findViewById(R.id.left_actions);
+        RecyclerView rightRecyclerView = view.findViewById(R.id.right_actions);
+        TextView closeButton = view.findViewById(R.id.sheet_close);
+
+        titleView.setText(title);
+        leftTitleView.setText(leftTitle);
+        rightTitleView.setText(rightTitle);
+
+        leftRecyclerView.setLayoutManager(new LinearLayoutManager(context));
+        leftRecyclerView.setAdapter(new ActionAdapter(leftItems, item -> {
+            dialog.dismiss();
+            if (leftCallback != null) {
+                leftCallback.onSelected(item);
+            }
+        }));
+
+        rightRecyclerView.setLayoutManager(new LinearLayoutManager(context));
+        rightRecyclerView.setAdapter(new ActionAdapter(rightItems, item -> {
+            dialog.dismiss();
+            if (rightCallback != null) {
+                rightCallback.onSelected(item);
+            }
+        }));
+
+        closeButton.setOnClickListener(v -> dialog.dismiss());
+        dialog.setContentView(view);
+        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bottomSheet != null) {
+            bottomSheet.setBackground(new ColorDrawable(Color.TRANSPARENT));
+        }
+        dialog.show();
+
+        if (context.getResources().getConfiguration().orientation
+                == Configuration.ORIENTATION_LANDSCAPE) {
+            FrameLayout sheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (sheet != null) {
+                sheet.post(() -> {
+                    BottomSheetBehavior<FrameLayout> behavior = BottomSheetBehavior.from(sheet);
+                    behavior.setSkipCollapsed(true);
+                    behavior.setFitToContents(true);
+                    behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+                });
+            }
+        }
+    }
+
     private static Dialog buildDialog(Context context, int layoutRes) {
         Dialog dialog = new Dialog(context);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);

@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.media.AudioManager;
+import android.media.audiofx.LoudnessEnhancer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -33,6 +34,7 @@ import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.Player;
 import androidx.media3.common.TrackGroup;
 import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
@@ -48,7 +50,7 @@ import androidx.media3.ui.PlayerView;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.stream.IntStream;
+import java.util.ArrayList;
 
 @UnstableApi
 public class VideoPlayerActivity extends AppCompatActivity {
@@ -58,6 +60,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
     public static final String EXTRA_VIDEO_URI = "VIDEO_URI";
     public static final String EXTRA_PLAYBACK_KEY = "PLAYBACK_KEY";
     public static final String EXTRA_VIDEO_TITLE = "VIDEO_TITLE";
+    public static final String EXTRA_PLAYLIST_URIS = "PLAYLIST_URIS";
+    public static final String EXTRA_PLAYLIST_KEYS = "PLAYLIST_KEYS";
+    public static final String EXTRA_PLAYLIST_TITLES = "PLAYLIST_TITLES";
+    public static final String EXTRA_PLAYLIST_INDEX = "PLAYLIST_INDEX";
+    private static final int ACTION_SUBTITLE_OFF = -1;
 
     private ExoPlayer exoPlayer;
     private PlayerView playerView;
@@ -70,6 +77,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private ImageView brightnessIcon;
     private LinearLayout volumeOverlay;
     private ProgressBar volumeProgressBar;
+    private ProgressBar volumeBoostProgressBar;
     private ImageView volumeIcon;
     private TextView tvVideoName;
     private ImageButton btnBack;
@@ -82,10 +90,15 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private AudioManager audioManager;
     private Uri videoUri;
     private String playbackKey;
+    private ArrayList<String> playlistTitles;
 
     private float maxVolume;
     private float currentVolume;
     private float currentBrightness;
+    private float volumeBoostPercent = 100f;
+    private LoudnessEnhancer loudnessEnhancer;
+    private final Runnable hideBrightnessOverlayRunnable = () -> brightnessOverlay.setVisibility(View.GONE);
+    private final Runnable hideVolumeOverlayRunnable = () -> volumeOverlay.setVisibility(View.GONE);
 
     @OptIn(markerClass = UnstableApi.class)
     @Override
@@ -128,6 +141,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         });
 
         volumeProgressBar = findViewById(R.id.volume_progress);
+        volumeBoostProgressBar = findViewById(R.id.volume_boost_progress);
         volumeIcon = findViewById(R.id.volume_icon);
         tvVideoName = findViewById(R.id.tv_video_name);
         btnBack = findViewById(R.id.btn_back);
@@ -183,11 +197,17 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
 
         playbackKey = resolvePlaybackKey(videoUri);
+        playlistTitles = getIntent().getStringArrayListExtra(EXTRA_PLAYLIST_TITLES);
         tvVideoName.setText(resolveDisplayTitle(videoUri));
 
         // Prefer extension renderers so the FFmpeg decoder can handle formats that the device
         // codec stack might reject, especially less common audio tracks.
         DefaultTrackSelector trackSelector = new DefaultTrackSelector(this);
+        trackSelector.setParameters(
+                trackSelector.buildUponParameters()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
+        );
 
         DefaultRenderersFactory renderersFactory =
                 new DefaultRenderersFactory(this)
@@ -199,14 +219,47 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 .build();
 
         playerView.setPlayer(exoPlayer);
+        playerView.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
+            if (visibility == View.VISIBLE) {
+                syncCustomControls(true);
+            } else {
+                syncCustomControls(false);
+            }
+        });
 
         // Restore the last playback position before starting playback so resume feels immediate.
-        MediaItem mediaItem = MediaItem.fromUri(videoUri);
-        exoPlayer.setMediaItem(mediaItem);
+        ArrayList<MediaItem> playlistItems = buildPlaylistItems();
+        int startIndex = resolveStartIndex(playlistItems);
+        if (playlistItems.isEmpty()) {
+            MediaItem mediaItem = new MediaItem.Builder()
+                    .setUri(videoUri)
+                    .setMediaId(playbackKey)
+                    .build();
+            exoPlayer.setMediaItem(mediaItem);
+        } else {
+            exoPlayer.setMediaItems(playlistItems, startIndex, C.TIME_UNSET);
+        }
         exoPlayer.prepare();
         long savedPosition = PlaybackPrefs.getInstance(this).getPosition(playbackKey);
         if (savedPosition > 0) exoPlayer.seekTo(savedPosition);
         exoPlayer.play();
+        exoPlayer.addListener(new Player.Listener() {
+            @Override
+            public void onAudioSessionIdChanged(int audioSessionId) {
+                attachLoudnessEnhancer(audioSessionId);
+                applyVolumeBoost();
+            }
+
+            @Override
+            public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+                if (mediaItem == null) {
+                    return;
+                }
+                playbackKey = mediaItem.mediaId;
+                videoUri = mediaItem.localConfiguration != null ? mediaItem.localConfiguration.uri : videoUri;
+                tvVideoName.setText(resolveCurrentTitle());
+            }
+        });
 
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -218,6 +271,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
         currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        applyVolumeBoost();
 
         // Use the current window brightness as the baseline for swipe gestures.
         currentBrightness = getWindow().getAttributes().screenBrightness;
@@ -239,6 +293,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
     @Override
     protected void onStart() {
         super.onStart();
+        brightnessOverlay.removeCallbacks(hideBrightnessOverlayRunnable);
+        volumeOverlay.removeCallbacks(hideVolumeOverlayRunnable);
         brightnessOverlay.setVisibility(View.GONE);
         volumeOverlay.setVisibility(View.GONE);
     }
@@ -275,6 +331,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             exoPlayer.release();
             exoPlayer = null;
         }
+        releaseLoudnessEnhancer();
     }
 
     @Override
@@ -347,6 +404,46 @@ public class VideoPlayerActivity extends AppCompatActivity {
         return stripExtension(lastSegment != null ? lastSegment : "Video");
     }
 
+    private ArrayList<MediaItem> buildPlaylistItems() {
+        ArrayList<String> playlistUris = getIntent().getStringArrayListExtra(EXTRA_PLAYLIST_URIS);
+        ArrayList<String> playlistKeys = getIntent().getStringArrayListExtra(EXTRA_PLAYLIST_KEYS);
+        ArrayList<MediaItem> items = new ArrayList<>();
+
+        if (playlistUris == null || playlistKeys == null || playlistUris.size() != playlistKeys.size()) {
+            return items;
+        }
+
+        for (int i = 0; i < playlistUris.size(); i++) {
+            items.add(new MediaItem.Builder()
+                    .setUri(Uri.parse(playlistUris.get(i)))
+                    .setMediaId(playlistKeys.get(i))
+                    .build());
+        }
+        return items;
+    }
+
+    private int resolveStartIndex(List<MediaItem> playlistItems) {
+        int requestedIndex = getIntent().getIntExtra(EXTRA_PLAYLIST_INDEX, 0);
+        if (playlistItems.isEmpty()) {
+            return 0;
+        }
+        return Math.max(0, Math.min(requestedIndex, playlistItems.size() - 1));
+    }
+
+    private String resolveCurrentTitle() {
+        if (exoPlayer != null) {
+            int currentIndex = exoPlayer.getCurrentMediaItemIndex();
+            if (playlistTitles != null && currentIndex >= 0 && currentIndex < playlistTitles.size()) {
+                return stripExtension(playlistTitles.get(currentIndex));
+            }
+            MediaItem mediaItem = exoPlayer.getCurrentMediaItem();
+            if (mediaItem != null && mediaItem.localConfiguration != null) {
+                return resolveDisplayTitle(mediaItem.localConfiguration.uri);
+            }
+        }
+        return resolveDisplayTitle(videoUri);
+    }
+
     private Long tryResolveMediaStoreId(Uri uri) {
         try {
             return android.content.ContentUris.parseId(uri);
@@ -366,56 +463,161 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
             DefaultTrackSelector trackSelector = (DefaultTrackSelector) exoPlayer.getTrackSelector();
             List<Tracks.Group> audioGroups = new java.util.ArrayList<>();
+            List<Tracks.Group> subtitleGroups = new java.util.ArrayList<>();
             for (Tracks.Group group : exoPlayer.getCurrentTracks().getGroups()) {
                 if (group.getType() == C.TRACK_TYPE_AUDIO && group.length > 0) {
                     audioGroups.add(group);
+                } else if (group.getType() == C.TRACK_TYPE_TEXT && group.length > 0) {
+                    subtitleGroups.add(group);
                 }
             }
-            if (audioGroups.isEmpty()) {
-                GlassUi.showToast(this, "No audio tracks found.");
+            if (audioGroups.isEmpty() && subtitleGroups.isEmpty()) {
+                GlassUi.showToast(this, "No audio or caption tracks found.");
                 return;
             }
 
-            java.util.ArrayList<GlassUi.ActionItem> actions = new java.util.ArrayList<>();
+            ArrayList<GlassUi.ActionItem> subtitleActions = buildSubtitleActions(subtitleGroups);
+            ArrayList<GlassUi.ActionItem> audioActions = buildAudioActions(audioGroups);
 
-            // Show all exposed audio tracks and label them by language when possible.
-            for (int i = 0; i < audioGroups.size(); i++) {
-                TrackGroup trackGroup = audioGroups.get(i).getMediaTrackGroup();
-                for (int j = 0; j < trackGroup.length; j++) {
-                    Format format = trackGroup.getFormat(j);
-                    String lang = format.language;
-                    String name = (lang == null || lang.isEmpty())
-                            ? String.format(Locale.US, "Track %d", j + 1)
-                            : String.format(Locale.US, "Track %d - %s", j + 1, lang);
-                    String subtitle = buildAudioTrackSubtitle(format, audioGroups.get(i).isTrackSupported(j));
-                    actions.add(new GlassUi.ActionItem(i * 100 + j, name, subtitle));
+            GlassUi.showDualActionSheet(
+                    this,
+                    "Tracks",
+                    "Captions",
+                    subtitleActions,
+                    item -> applySubtitleSelection(trackSelector, subtitleGroups, item),
+                    "Audio",
+                    audioActions,
+                    item -> applyAudioSelection(trackSelector, audioGroups, item)
+            );
+        });
+    }
+
+    private ArrayList<GlassUi.ActionItem> buildAudioActions(List<Tracks.Group> audioGroups) {
+        ArrayList<GlassUi.ActionItem> actions = new ArrayList<>();
+        for (int i = 0; i < audioGroups.size(); i++) {
+            TrackGroup trackGroup = audioGroups.get(i).getMediaTrackGroup();
+            for (int j = 0; j < trackGroup.length; j++) {
+                Format format = trackGroup.getFormat(j);
+                String title = buildTrackTitle("Track", j, format.language, format.label);
+                String subtitle = buildAudioTrackSubtitle(format, audioGroups.get(i).isTrackSupported(j));
+                if (audioGroups.get(i).isTrackSelected(j)) {
+                    subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
+                }
+                actions.add(new GlassUi.ActionItem(i * 100 + j, title, subtitle));
+            }
+        }
+        if (actions.isEmpty()) {
+            actions.add(new GlassUi.ActionItem(Integer.MIN_VALUE, "No audio tracks", "Nothing available for this media"));
+        }
+        return actions;
+    }
+
+    private ArrayList<GlassUi.ActionItem> buildSubtitleActions(List<Tracks.Group> subtitleGroups) {
+        ArrayList<GlassUi.ActionItem> actions = new ArrayList<>();
+        boolean subtitleEnabled = isTextTrackEnabled();
+        actions.add(new GlassUi.ActionItem(
+                ACTION_SUBTITLE_OFF,
+                "Off",
+                subtitleEnabled ? "Disable captions" : "Currently off"
+        ));
+
+        for (int i = 0; i < subtitleGroups.size(); i++) {
+            TrackGroup trackGroup = subtitleGroups.get(i).getMediaTrackGroup();
+            for (int j = 0; j < trackGroup.length; j++) {
+                Format format = trackGroup.getFormat(j);
+                String title = buildTrackTitle("Caption", j, format.language, format.label);
+                String subtitle = buildSubtitleTrackSubtitle(format, subtitleGroups.get(i).isTrackSupported(j));
+                if (subtitleGroups.get(i).isTrackSelected(j) && subtitleEnabled) {
+                    subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
+                }
+                actions.add(new GlassUi.ActionItem(i * 100 + j, title, subtitle));
+            }
+        }
+        return actions;
+    }
+
+    private void applyAudioSelection(DefaultTrackSelector trackSelector, List<Tracks.Group> audioGroups, GlassUi.ActionItem item) {
+        if (item.id == Integer.MIN_VALUE) {
+            return;
+        }
+        int groupIndex = item.id / 100;
+        int trackIndex = item.id % 100;
+        Tracks.Group selectedGroup = audioGroups.get(groupIndex);
+        TrackGroup trackGroup = selectedGroup.getMediaTrackGroup();
+        Format fmt = trackGroup.getFormat(trackIndex);
+
+        if (selectedGroup.isTrackSupported(trackIndex) || isAudioFormatSupported(fmt)) {
+            TrackSelectionOverride override = new TrackSelectionOverride(trackGroup, trackIndex);
+            DefaultTrackSelector.Parameters params =
+                    trackSelector.buildUponParameters()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                            .addOverride(override)
+                            .build();
+            trackSelector.setParameters(params);
+            GlassUi.showToast(this, "Selected audio: " + item.title);
+        } else {
+            GlassUi.showToast(this, "Unsupported audio format.");
+        }
+    }
+
+    private void applySubtitleSelection(DefaultTrackSelector trackSelector, List<Tracks.Group> subtitleGroups, GlassUi.ActionItem item) {
+        if (item.id == ACTION_SUBTITLE_OFF) {
+            DefaultTrackSelector.Parameters params =
+                    trackSelector.buildUponParameters()
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .build();
+            trackSelector.setParameters(params);
+            GlassUi.showToast(this, "Captions off");
+            return;
+        }
+
+        int groupIndex = item.id / 100;
+        int trackIndex = item.id % 100;
+        Tracks.Group selectedGroup = subtitleGroups.get(groupIndex);
+        if (!selectedGroup.isTrackSupported(trackIndex)) {
+            GlassUi.showToast(this, "Unsupported caption track.");
+            return;
+        }
+
+        TrackGroup trackGroup = selectedGroup.getMediaTrackGroup();
+        TrackSelectionOverride override = new TrackSelectionOverride(trackGroup, trackIndex);
+        DefaultTrackSelector.Parameters params =
+                trackSelector.buildUponParameters()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .addOverride(override)
+                        .build();
+        trackSelector.setParameters(params);
+        GlassUi.showToast(this, "Selected captions: " + item.title);
+    }
+
+    private boolean isTextTrackEnabled() {
+        if (exoPlayer == null) {
+            return false;
+        }
+        for (Tracks.Group group : exoPlayer.getCurrentTracks().getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_TEXT) {
+                continue;
+            }
+            for (int i = 0; i < group.length; i++) {
+                if (group.isTrackSelected(i)) {
+                    return true;
                 }
             }
+        }
+        return false;
+    }
 
-            GlassUi.showActionSheet(this, "Audio tracks", actions, item -> {
-                int groupIndex = item.id / 100;
-                int trackIndex = item.id % 100;
-                Tracks.Group selectedGroup = audioGroups.get(groupIndex);
-                TrackGroup trackGroup = selectedGroup.getMediaTrackGroup();
-                Format fmt = trackGroup.getFormat(trackIndex);
-
-                if (selectedGroup.isTrackSupported(trackIndex) || isAudioFormatSupported(fmt)) {
-                    // Clear any previous audio override so only the selected track remains active.
-                    TrackSelectionOverride override =
-                            new TrackSelectionOverride(trackGroup, trackIndex);
-                    DefaultTrackSelector.Parameters params =
-                            trackSelector.buildUponParameters()
-                                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
-                                    .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-                                    .addOverride(override)
-                                    .build();
-                    trackSelector.setParameters(params);
-                    GlassUi.showToast(this, "Selected: " + item.title);
-                } else {
-                    GlassUi.showToast(this, "Unsupported audio format.");
-                }
-            });
-        });
+    private String buildTrackTitle(String fallbackPrefix, int trackIndex, String language, String label) {
+        if (label != null && !label.trim().isEmpty()) {
+            return label.trim();
+        }
+        if (language != null && !language.trim().isEmpty()) {
+            return String.format(Locale.US, "%s %d - %s", fallbackPrefix, trackIndex + 1, language);
+        }
+        return String.format(Locale.US, "%s %d", fallbackPrefix, trackIndex + 1);
     }
 
     private boolean isAudioFormatSupported(Format format) {
@@ -446,6 +648,16 @@ public class VideoPlayerActivity extends AppCompatActivity {
         String channels = format.channelCount > 0 ? " • " + format.channelCount + " ch" : "";
         String sampleRate = format.sampleRate > 0 ? " • " + format.sampleRate + " Hz" : "";
         return isSupported ? codec + channels + sampleRate : codec + channels + sampleRate + " • limited";
+    }
+
+    private String buildSubtitleTrackSubtitle(Format format, boolean isSupported) {
+        String language = format.language != null && !format.language.isEmpty()
+                ? format.language
+                : "Unknown language";
+        String mime = format.sampleMimeType != null
+                ? format.sampleMimeType.replace("application/", "").replace("text/", "").toUpperCase(Locale.US)
+                : "Caption";
+        return isSupported ? language + " • " + mime : language + " • " + mime + " • limited";
     }
 
     @SuppressLint("SourceLockedOrientationActivity")
@@ -556,6 +768,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
         });
 
         playerView.setOnTouchListener((v, event) -> {
+            if (playerView.isControllerFullyVisible()) {
+                return false;
+            }
             gestureDetector.onTouchEvent(event);
 
             if (event.getAction() == MotionEvent.ACTION_UP) {
@@ -591,19 +806,24 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void handleVolumeChange(float deltaY) {
         if (deltaY != 0) {
-            // Volume changes are clamped against the real stream limits reported by AudioManager.
-            float volume = currentVolume + (deltaY / 100);
-            volume = Math.max(0, Math.min(maxVolume, volume));
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (int) volume, 0);
-            currentVolume = volume;
+            // Up to 100% uses the system stream volume; beyond that we apply player-local boost.
+            float deltaPercent = deltaY / Math.max(1f, maxVolume);
+            float targetPercent = Math.max(0f, Math.min(200f, getCombinedVolumePercent() + deltaPercent));
 
-            float volumePercentage = (currentVolume / maxVolume) * 100;
-            updateVolumeOverlay(volumePercentage);
+            float basePercent = Math.min(targetPercent, 100f);
+            currentVolume = (basePercent / 100f) * maxVolume;
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(currentVolume), 0);
+
+            volumeBoostPercent = targetPercent > 100f ? targetPercent : 100f;
+            applyVolumeBoost();
+            updateVolumeOverlay(targetPercent);
         }
     }
 
     private void updateBrightnessOverlay(float brightness) {
         // Only one overlay should be visible at a time, otherwise the feedback gets cluttered.
+        brightnessOverlay.removeCallbacks(hideBrightnessOverlayRunnable);
+        volumeOverlay.removeCallbacks(hideVolumeOverlayRunnable);
         volumeOverlay.setVisibility(View.GONE);
         volumeOverlay.removeCallbacks(hideControlsRunnable);
 
@@ -612,18 +832,77 @@ public class VideoPlayerActivity extends AppCompatActivity {
         int brightnessPercentage = (int) (brightness * 100);
         brightnessProgressBar.setProgress(brightnessPercentage);
         brightnessOverlay.setVisibility(View.VISIBLE);
-        brightnessOverlay.postDelayed(() -> brightnessOverlay.setVisibility(View.GONE), 1500);
+        brightnessOverlay.postDelayed(hideBrightnessOverlayRunnable, 1200);
     }
 
     private void updateVolumeOverlay(float volumePercentage) {
+        volumeOverlay.removeCallbacks(hideVolumeOverlayRunnable);
+        brightnessOverlay.removeCallbacks(hideBrightnessOverlayRunnable);
         brightnessOverlay.setVisibility(View.GONE);
         brightnessOverlay.removeCallbacks(hideControlsRunnable);
 
         positionOverlay(volumeOverlay);
 
-        volumeProgressBar.setProgress((int) volumePercentage);
+        int baseProgress = (int) Math.max(0f, Math.min(100f, volumePercentage));
+        int boostProgress = volumePercentage > 100f
+                ? (int) Math.max(0f, Math.min(100f, volumePercentage - 100f))
+                : 0;
+        volumeProgressBar.setProgress(baseProgress);
+        volumeBoostProgressBar.setProgress(boostProgress);
         volumeOverlay.setVisibility(View.VISIBLE);
-        volumeOverlay.postDelayed(() -> volumeOverlay.setVisibility(View.GONE), 1500);
+        volumeOverlay.postDelayed(hideVolumeOverlayRunnable, 1200);
+    }
+
+    private float getCombinedVolumePercent() {
+        float systemPercent = maxVolume <= 0f ? 0f : (currentVolume / maxVolume) * 100f;
+        return volumeBoostPercent > 100f ? Math.max(systemPercent, volumeBoostPercent) : systemPercent;
+    }
+
+    private void applyVolumeBoost() {
+        if (exoPlayer == null) {
+            return;
+        }
+        float playerVolume = volumeBoostPercent <= 100f
+                ? 1f
+                : Math.min(2f, volumeBoostPercent / 100f);
+        exoPlayer.setVolume(playerVolume);
+        if (loudnessEnhancer == null) {
+            return;
+        }
+
+        int gainMb = volumeBoostPercent <= 100f
+                ? 0
+                : Math.round((volumeBoostPercent - 100f) * 15f);
+        try {
+            loudnessEnhancer.setTargetGain(gainMb);
+            loudnessEnhancer.setEnabled(gainMb > 0);
+        } catch (Exception e) {
+            Log.w("VideoPlayer", "Unable to apply volume boost", e);
+        }
+    }
+
+    private void attachLoudnessEnhancer(int audioSessionId) {
+        releaseLoudnessEnhancer();
+        if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId == 0) {
+            return;
+        }
+        try {
+            loudnessEnhancer = new LoudnessEnhancer(audioSessionId);
+        } catch (Exception e) {
+            Log.w("VideoPlayer", "Unable to attach loudness enhancer", e);
+            loudnessEnhancer = null;
+        }
+    }
+
+    private void releaseLoudnessEnhancer() {
+        if (loudnessEnhancer == null) {
+            return;
+        }
+        try {
+            loudnessEnhancer.release();
+        } catch (Exception ignored) {
+        }
+        loudnessEnhancer = null;
     }
 
     private void positionOverlay(View overlay) {
@@ -644,14 +923,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         // We manage the extra chrome ourselves because the screen has custom top controls in
         // addition to ExoPlayer's standard controller.
         playerView.showController();
-        rotateButton.setVisibility(View.VISIBLE);
-        cropButton.setVisibility(View.VISIBLE);
-        audioTrackButton.setVisibility(View.VISIBLE);
-        if (btnBack != null) btnBack.setVisibility(View.VISIBLE);
-        if (tvVideoName != null) tvVideoName.setVisibility(View.VISIBLE);
-        View topBar = findViewById(R.id.top_bar);
-        if (topBar != null) topBar.setVisibility(View.VISIBLE);
-        isControlsVisible = true;
+        syncCustomControls(true);
         resetHideControlsTimer();
     }
 
@@ -659,15 +931,23 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private void hideControls() {
         // Hiding both our own views and ExoPlayer's controls creates the clean full-screen state.
         playerView.hideController();
-        rotateButton.setVisibility(View.GONE);
-        audioTrackButton.setVisibility(View.GONE);
-        cropButton.setVisibility(View.GONE);
-        if (btnBack != null) btnBack.setVisibility(View.GONE);
-        if (tvVideoName != null) tvVideoName.setVisibility(View.GONE);
-        View topBar = findViewById(R.id.top_bar);
-        if (topBar != null) topBar.setVisibility(View.GONE);
-        isControlsVisible = false;
+        syncCustomControls(false);
         hideSystemUI();
+    }
+
+    private void syncCustomControls(boolean visible) {
+        int state = visible ? View.VISIBLE : View.GONE;
+        rotateButton.setVisibility(state);
+        audioTrackButton.setVisibility(state);
+        cropButton.setVisibility(state);
+        if (btnBack != null) btnBack.setVisibility(state);
+        if (tvVideoName != null) tvVideoName.setVisibility(state);
+        View topBar = findViewById(R.id.top_bar);
+        if (topBar != null) topBar.setVisibility(state);
+        isControlsVisible = visible;
+        if (!visible) {
+            hideSystemUI();
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")

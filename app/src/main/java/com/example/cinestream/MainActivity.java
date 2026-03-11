@@ -60,6 +60,8 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private RecyclerView recyclerView;
     private MaterialCardView titleCard;
+    private MaterialCardView aboutBtn;
+    private ImageView aboutIcon;
     private MaterialCardView toggleViewBtn;
     private ImageView toggleIcon;
 
@@ -133,6 +135,8 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         }
 
         titleCard = findViewById(R.id.titleCard);
+        aboutBtn = findViewById(R.id.aboutBtn);
+        aboutIcon = findViewById(R.id.aboutIcon);
         recyclerView = findViewById(R.id.recyclerView);
         toggleViewBtn = findViewById(R.id.toggleViewBtn);
         toggleIcon = findViewById(R.id.toggleIcon);
@@ -155,10 +159,14 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         // stays visible without feeling muddy or washed out.
         if (isLightMode()) {
             titleCard.setCardBackgroundColor(Color.argb(180, 255, 255, 255));
+            aboutBtn.setCardBackgroundColor(Color.argb(200, 240, 240, 245));
+            aboutIcon.setColorFilter(Color.argb(255, 34, 43, 58));
             toggleViewBtn.setCardBackgroundColor(Color.argb(200, 240, 240, 245));
             searchCard.setCardBackgroundColor(Color.argb(180, 220, 220, 225));
         } else {
             titleCard.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
+            aboutBtn.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
+            aboutIcon.setColorFilter(Color.argb(255, 245, 247, 255));
             toggleViewBtn.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
             searchCard.setCardBackgroundColor(Color.argb(60, 255, 255, 255));
         }
@@ -222,6 +230,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) toggleViewBtn.getLayoutParams();
             tlp.bottomMargin = navBarHeight + 24;
             toggleViewBtn.setLayoutParams(tlp);
+
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams alp =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) aboutBtn.getLayoutParams();
+            alp.topMargin = statusBarHeight + 12;
+            aboutBtn.setLayoutParams(alp);
             titleCard.getViewTreeObserver().addOnGlobalLayoutListener(
                     new ViewTreeObserver.OnGlobalLayoutListener() {
                         @Override
@@ -253,6 +266,10 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                         }
                     });
             return insets;
+        });
+        aboutBtn.setOnClickListener(v -> {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            showAboutDialog();
         });
         toggleViewBtn.setOnClickListener(v -> {
             // The button is effectively a mode switch, so it gets both haptic and scale feedback
@@ -639,14 +656,51 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     @UnstableApi
     @Override
-    public void onPlayVideo(VideoFile videoFile) {
+    public void onPlayVideo(VideoFile videoFile, List<VideoFile> playlist, int position) {
         // Pass the Uri and stable playback key separately so the player can resume reliably even
         // when it is launched from inside the app instead of from an external intent.
         Intent intent = new Intent(this, VideoPlayerActivity.class);
         intent.putExtra(VideoPlayerActivity.EXTRA_VIDEO_URI, videoFile.getContentUri().toString());
         intent.putExtra(VideoPlayerActivity.EXTRA_PLAYBACK_KEY, videoFile.getPlaybackKey());
         intent.putExtra(VideoPlayerActivity.EXTRA_VIDEO_TITLE, videoFile.getName());
+        intent.putStringArrayListExtra(
+                VideoPlayerActivity.EXTRA_PLAYLIST_URIS,
+                buildPlaylistValues(playlist, PlaylistField.URI)
+        );
+        intent.putStringArrayListExtra(
+                VideoPlayerActivity.EXTRA_PLAYLIST_KEYS,
+                buildPlaylistValues(playlist, PlaylistField.KEY)
+        );
+        intent.putStringArrayListExtra(
+                VideoPlayerActivity.EXTRA_PLAYLIST_TITLES,
+                buildPlaylistValues(playlist, PlaylistField.TITLE)
+        );
+        intent.putExtra(VideoPlayerActivity.EXTRA_PLAYLIST_INDEX, position);
         startActivity(intent);
+    }
+
+    private enum PlaylistField { URI, KEY, TITLE }
+
+    private ArrayList<String> buildPlaylistValues(List<VideoFile> playlist, PlaylistField field) {
+        ArrayList<String> values = new ArrayList<>();
+        if (playlist == null) {
+            return values;
+        }
+
+        for (VideoFile file : playlist) {
+            switch (field) {
+                case URI:
+                    values.add(file.getContentUri().toString());
+                    break;
+                case KEY:
+                    values.add(file.getPlaybackKey());
+                    break;
+                case TITLE:
+                    values.add(file.getName());
+                    break;
+            }
+        }
+        return values;
     }
 
     @Override
@@ -801,5 +855,18 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         pendingVideoActionFile = null;
         pendingRenameName = null;
         pendingMediaAction = PendingMediaAction.NONE;
+    }
+
+    private void showAboutDialog() {
+        List<GlassUi.InfoItem> rows = new ArrayList<>();
+        rows.add(new GlassUi.InfoItem("Project", "CineStream"));
+        rows.add(new GlassUi.InfoItem("Version", "v9.2"));
+        rows.add(new GlassUi.InfoItem("Developer", "Aditya"));
+        rows.add(new GlassUi.InfoItem("About", "CineStream is a local-first Android video player focused on clean browsing, smooth playback, folder navigation, and a refined glass-inspired interface."));
+        rows.add(new GlassUi.InfoItem("Highlights", "Folder and list browsing, playlist-aware next and previous playback, subtitle and audio track selection, gesture controls, resume progress, and detailed media inspection."));
+        rows.add(new GlassUi.InfoItem("Design", "Built to keep the library simple on the home screen while giving the player a modern full-screen experience with lightweight overlays and direct controls."));
+        rows.add(new GlassUi.InfoItem("License", "MIT License"));
+        rows.add(new GlassUi.InfoItem("Open source note", "This project may be used, copied, modified, merged, published, distributed, sublicensed, and sold under the terms of the MIT License."));
+        GlassUi.showInfoDialog(this, "About CineStream", rows);
     }
 }

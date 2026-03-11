@@ -14,13 +14,6 @@
         android:layout_height="match_parent"
         app:use_controller="true" />
 
-    <!-- Top gradient scrim -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="160dp"
-        android:background="@drawable/top_scrim_gradient"
-        android:layout_gravity="top" />
-
     <!-- Top bar — Java sets paddingTop = statusBarHeight -->
     <LinearLayout
         android:id="@+id/top_bar"
@@ -121,15 +114,34 @@
             android:layout_height="28dp"
             android:src="@drawable/ic_volume" />
 
-        <ProgressBar
-            android:id="@+id/volume_progress"
-            style="?android:attr/progressBarStyleHorizontal"
+        <FrameLayout
             android:layout_width="120dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:max="100"
-            android:progress="50"
-            android:progressTint="@color/colorAccent" />
+            android:layout_marginTop="8dp">
+
+            <ProgressBar
+                android:id="@+id/volume_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="6dp"
+                android:max="100"
+                android:maxHeight="6dp"
+                android:minHeight="6dp"
+                android:progress="50"
+                android:progressDrawable="@drawable/progress_bar_purple" />
+
+            <ProgressBar
+                android:id="@+id/volume_boost_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="6dp"
+                android:max="100"
+                android:maxHeight="6dp"
+                android:minHeight="6dp"
+                android:progress="0"
+                android:progressDrawable="@drawable/progress_bar_red_overlay" />
+
+        </FrameLayout>
 
     </LinearLayout>
 
@@ -155,11 +167,13 @@
             android:id="@+id/brightness_progress"
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="120dp"
-            android:layout_height="wrap_content"
+            android:layout_height="6dp"
             android:layout_marginTop="8dp"
             android:max="100"
+            android:maxHeight="6dp"
+            android:minHeight="6dp"
             android:progress="50"
-            android:progressTint="@color/colorAccent" />
+            android:progressDrawable="@drawable/progress_bar_orange" />
 
     </LinearLayout>
 

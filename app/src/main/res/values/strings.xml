@@ -10,4 +10,5 @@
     <string name="fill">Fill</string>
     <string name="fit">Fit</string>
     <string name="lock">Lock</string>
+    <string name="about_project">About Project</string>
 </resources>

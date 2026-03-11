@@ -44,6 +44,31 @@
 
     </com.google.android.material.card.MaterialCardView>
 
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/aboutBtn"
+        android:layout_width="55dp"
+        android:layout_height="55dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="6dp"
+        app:cardElevation="8dp"
+        app:cardCornerRadius="24dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="#1AFFFFFF"
+        app:cardBackgroundColor="#CC1C1B1F"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ImageView
+            android:id="@+id/aboutIcon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_info"
+            android:contentDescription="@string/about_project"
+            android:scaleType="fitCenter" />
+
+    </com.google.android.material.card.MaterialCardView>
+
     <!-- Floating search bar — position set in code below titleCard -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/searchCard"

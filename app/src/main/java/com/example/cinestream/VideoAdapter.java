@@ -33,15 +33,17 @@ import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHolder> {
 
     public interface Listener {
-        void onPlayVideo(VideoFile videoFile);
+        void onPlayVideo(VideoFile videoFile, List<VideoFile> playlist, int position);
         void onRenameVideo(VideoFile videoFile);
         void onDeleteVideo(VideoFile videoFile);
     }
@@ -56,6 +58,8 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     private final Listener        listener;
     private final Handler         mainHandler     = new Handler(Looper.getMainLooper());
     private final ExecutorService executorService = Executors.newFixedThreadPool(2);
+    private final Map<String, MediaInfoSnapshot> mediaInfoCache = new HashMap<>();
+    private final Map<String, Integer> tintColorCache = new HashMap<>();
 
     public VideoAdapter(Context context, List<VideoFile> videoFiles, Listener listener) {
         this.context    = context;
@@ -77,6 +81,9 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     public void onBindViewHolder(@NonNull VideoViewHolder holder, int position) {
         VideoFile videoFile = videoFiles.get(position);
         Uri       videoUri  = videoFile.getContentUri();
+        String    playbackKey = videoFile.getPlaybackKey();
+
+        holder.boundPlaybackKey = playbackKey;
 
         holder.videoName.setText(videoFile.getName());
 
@@ -95,19 +102,35 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         }
 
         holder.cardTint.setBackgroundColor(Color.TRANSPARENT);
+        holder.videoDuration.setText("00:00");
+        holder.videoQuality.setText("Unknown");
+        applyCachedTint(holder, playbackKey);
 
         // ── Thumbnail + Palette tint ─────────────────────────────────
         Glide.with(context)
                 .asBitmap()
                 .load(videoUri)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .override(336, 216)
+                .centerCrop()
                 .placeholder(R.drawable.ic_video_placeholder)
                 .into(new CustomTarget<Bitmap>() {
                     @Override
                     public void onResourceReady(@NonNull Bitmap resource,
                                                 Transition<? super Bitmap> transition) {
+                        if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                            return;
+                        }
                         holder.videoThumbnail.setImageBitmap(resource);
+                        Integer cachedTint = tintColorCache.get(playbackKey);
+                        if (cachedTint != null) {
+                            applyGradientTint(holder, cachedTint);
+                            return;
+                        }
                         Palette.from(resource).generate(palette -> {
+                            if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                                return;
+                            }
                             if (palette == null) return;
                             Palette.Swatch swatch = palette.getVibrantSwatch();
                             if (swatch == null) swatch = palette.getMutedSwatch();
@@ -117,43 +140,32 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                             float[] hsv = new float[3];
                             Color.colorToHSV(rgb, hsv);
                             if (hsv[2] < 0.15f) return;
-                            int r = Color.red(rgb), g = Color.green(rgb), b = Color.blue(rgb);
-                            android.graphics.drawable.GradientDrawable gradient =
-                                    new android.graphics.drawable.GradientDrawable(
-                                            android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
-                                            new int[]{
-                                                    Color.argb(60, r, g, b),
-                                                    Color.argb(20, r, g, b),
-                                                    Color.argb(0,  r, g, b)
-                                            });
-                            gradient.setCornerRadius(
-                                    20 * context.getResources().getDisplayMetrics().density);
-                            holder.cardTint.setBackground(gradient);
+                            tintColorCache.put(playbackKey, rgb);
+                            applyGradientTint(holder, rgb);
                         });
                     }
 
                     @Override
                     public void onLoadCleared(android.graphics.drawable.Drawable placeholder) {
-                        holder.videoThumbnail.setImageDrawable(placeholder);
-                        holder.cardTint.setBackgroundColor(Color.TRANSPARENT);
+                        if (playbackKey.equals(holder.boundPlaybackKey)) {
+                            holder.videoThumbnail.setImageDrawable(placeholder);
+                            applyCachedTint(holder, playbackKey);
+                        }
                     }
                 });
 
         holder.videoSize.setText(getFileSize(videoFile.getSizeBytes()));
 
-        // ── Metadata extraction — off UI thread ──────────────────────
-        executorService.execute(() -> {
-            MediaInfoSnapshot snapshot = extractMediaInfo(videoFile);
-            mainHandler.post(() -> {
-                holder.videoDuration.setText(snapshot.durationLabel);
-                holder.videoQuality.setText(snapshot.qualityLabel);
-            });
+        // Click handlers must be attached for every bind. If they live below the metadata-cache
+        // fast path, recycled rows can lose their play/open behavior after rebinding.
+        holder.itemView.setOnClickListener(v -> {
+            int adapterPosition = holder.getBindingAdapterPosition();
+            if (adapterPosition == RecyclerView.NO_POSITION) {
+                return;
+            }
+            listener.onPlayVideo(videoFile, videoFiles, adapterPosition);
         });
 
-        // ── Click — play ─────────────────────────────────────────────
-        holder.itemView.setOnClickListener(v -> listener.onPlayVideo(videoFile));
-
-        // ── Long-press — action sheet ────────────────────────────────
         holder.itemView.setOnLongClickListener(v -> {
             List<GlassUi.ActionItem> actions = new ArrayList<>();
             actions.add(new GlassUi.ActionItem(ACTION_RENAME, "Rename",
@@ -173,7 +185,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 } else if (item.id == ACTION_INFO) {
                     // Off main thread — avoids ANR on large files
                     executorService.execute(() -> {
-                        MediaInfoSnapshot snapshot = extractMediaInfo(videoFile);
+                        MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, true);
                         mainHandler.post(() -> showVideoInfo(videoFile, snapshot));
                     });
                 } else if (item.id == ACTION_SHARE) {
@@ -182,6 +194,27 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             });
             return true;
         });
+
+        // ── Metadata extraction — off UI thread ──────────────────────
+        MediaInfoSnapshot cachedSnapshot = mediaInfoCache.get(playbackKey);
+        if (cachedSnapshot != null) {
+            holder.videoDuration.setText(cachedSnapshot.durationLabel);
+            holder.videoQuality.setText(cachedSnapshot.qualityLabel);
+            return;
+        }
+
+        executorService.execute(() -> {
+            MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, false);
+            mainHandler.post(() -> {
+                mediaInfoCache.put(playbackKey, snapshot);
+                if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                    return;
+                }
+                holder.videoDuration.setText(snapshot.durationLabel);
+                holder.videoQuality.setText(snapshot.qualityLabel);
+            });
+        });
+
     }
 
     @Override
@@ -196,6 +229,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         TextView videoName, videoSize, videoDuration, videoQuality;
         View cardTint;
         View videoProgress;
+        String boundPlaybackKey;
 
         @SuppressLint("WrongViewCast")
         public VideoViewHolder(@NonNull View itemView) {
@@ -208,6 +242,30 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             cardTint       = itemView.findViewById(R.id.card_tint);
             videoProgress  = itemView.findViewById(R.id.video_progress);
         }
+    }
+
+    private void applyCachedTint(VideoViewHolder holder, String playbackKey) {
+        Integer cachedTint = tintColorCache.get(playbackKey);
+        if (cachedTint == null) {
+            holder.cardTint.setBackgroundColor(Color.TRANSPARENT);
+            return;
+        }
+        applyGradientTint(holder, cachedTint);
+    }
+
+    private void applyGradientTint(VideoViewHolder holder, int rgb) {
+        int r = Color.red(rgb), g = Color.green(rgb), b = Color.blue(rgb);
+        android.graphics.drawable.GradientDrawable gradient =
+                new android.graphics.drawable.GradientDrawable(
+                        android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                        new int[]{
+                                Color.argb(60, r, g, b),
+                                Color.argb(20, r, g, b),
+                                Color.argb(0,  r, g, b)
+                        });
+        gradient.setCornerRadius(
+                20 * context.getResources().getDisplayMetrics().density);
+        holder.cardTint.setBackground(gradient);
     }
 
     // ── Media info snapshot ──────────────────────────────────────────
@@ -225,11 +283,14 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         String frameRateLabel    = "Unknown";
         String audioDetailsLabel = "Unknown";
         String uriLabel          = "Unknown";
+        int primaryAudioChannels   = 0;
+        int primaryAudioSampleRate = 0;
+        List<String> allAudioTrackDetails = new ArrayList<>();
     }
 
     // ── Core extraction ──────────────────────────────────────────────
 
-    private MediaInfoSnapshot extractMediaInfo(VideoFile videoFile) {
+    private MediaInfoSnapshot extractMediaInfo(VideoFile videoFile, boolean allowFfmpegFallback) {
         MediaInfoSnapshot      snapshot  = new MediaInfoSnapshot();
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         MediaExtractor         extractor = new MediaExtractor();
@@ -271,50 +332,101 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             if (overallBitrate > 0) snapshot.bitrateLabel = formatBitrate(overallBitrate);
 
             // Per-track scan
+            // Pass 1 — video track info
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.containsKey(MediaFormat.KEY_MIME)
+                        ? format.getString(MediaFormat.KEY_MIME) : null;
+                if (mime == null || !mime.startsWith("video/")) continue;
+
+                snapshot.videoCodecLabel = prettifyCodec(mime);
+                if (format.containsKey(MediaFormat.KEY_WIDTH))
+                    width  = format.getInteger(MediaFormat.KEY_WIDTH);
+                if (format.containsKey(MediaFormat.KEY_HEIGHT))
+                    height = format.getInteger(MediaFormat.KEY_HEIGHT);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        && format.containsKey(MediaFormat.KEY_ROTATION)) {
+                    int r = format.getInteger(MediaFormat.KEY_ROTATION);
+                    if (r == 90 || r == 270) { int t = width; width = height; height = t; }
+                }
+                if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                    snapshot.frameRateLabel = format.getInteger(MediaFormat.KEY_FRAME_RATE) + " fps";
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    String cr = retriever.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
+                    if (cr != null && !cr.isEmpty()) {
+                        try {
+                            snapshot.frameRateLabel = String.format(
+                                    Locale.US, "%.0f fps", Float.parseFloat(cr));
+                        } catch (Exception ignored) {}
+                    }
+                }
+                if (format.containsKey(MediaFormat.KEY_BIT_RATE))
+                    snapshot.bitrateLabel = formatBitrate(format.getInteger(MediaFormat.KEY_BIT_RATE));
+            }
+
+// Pass 2 — audio tracks, aggressive: don't skip null mime tracks
             for (int i = 0; i < extractor.getTrackCount(); i++) {
                 MediaFormat format = extractor.getTrackFormat(i);
                 String mime = format.containsKey(MediaFormat.KEY_MIME)
                         ? format.getString(MediaFormat.KEY_MIME) : null;
 
-                if (mime != null && mime.startsWith("video/")) {
-                    snapshot.videoCodecLabel = prettifyCodec(mime);
+                // Skip anything that is clearly video or subtitle
+                if (mime != null && (mime.startsWith("video/") || mime.startsWith("text/")
+                        || mime.startsWith("application/"))) continue;
 
-                    if (format.containsKey(MediaFormat.KEY_WIDTH))
-                        width  = format.getInteger(MediaFormat.KEY_WIDTH);
-                    if (format.containsKey(MediaFormat.KEY_HEIGHT))
-                        height = format.getInteger(MediaFormat.KEY_HEIGHT);
+                // Channel + sample — available even when mime is null/unsupported
+                int ch = format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)
+                        ? format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 0;
+                int hz = format.containsKey(MediaFormat.KEY_SAMPLE_RATE)
+                        ? format.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 0;
 
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                            && format.containsKey(MediaFormat.KEY_ROTATION)) {
-                        int r = format.getInteger(MediaFormat.KEY_ROTATION);
-                        if (r == 90 || r == 270) {
-                            int t = width; width = height; height = t;
-                        }
+                // Skip if nothing useful at all
+                if (mime == null && ch == 0 && hz == 0) continue;
+
+                String codecLabel = prettifyCodec(mime); // "Unknown" if mime null
+
+                List<String> parts = new ArrayList<>();
+                if (!"Unknown".equals(codecLabel)) parts.add(codecLabel);
+                if (ch > 0) parts.add(ch + " ch");
+                if (hz > 0) parts.add(hz + " Hz");
+                String trackDetail = parts.isEmpty() ? "Audio track" : TextUtils.join(" • ", parts);
+                snapshot.allAudioTrackDetails.add(trackDetail);
+
+                if ("Unknown".equals(snapshot.audioCodecLabel)) {
+                    snapshot.audioCodecLabel        = codecLabel;
+                    snapshot.primaryAudioChannels   = ch;
+                    snapshot.primaryAudioSampleRate = hz;
+                }
+            }
+
+// Build multi-track audio details label
+            if (!snapshot.allAudioTrackDetails.isEmpty()) {
+                if (snapshot.allAudioTrackDetails.size() == 1) {
+                    snapshot.audioDetailsLabel = snapshot.allAudioTrackDetails.get(0);
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < snapshot.allAudioTrackDetails.size(); i++) {
+                        sb.append("Track ").append(i + 1).append(": ")
+                                .append(snapshot.allAudioTrackDetails.get(i));
+                        if (i < snapshot.allAudioTrackDetails.size() - 1) sb.append("\n");
                     }
+                    snapshot.audioDetailsLabel = sb.toString();
+                }
+            }
 
-                    // Frame rate — extractor first, capture rate fallback
-                    if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
-                        snapshot.frameRateLabel =
-                                format.getInteger(MediaFormat.KEY_FRAME_RATE) + " fps";
-                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        String cr = retriever.extractMetadata(
-                                MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
-                        if (cr != null && !cr.isEmpty()) {
-                            try {
-                                snapshot.frameRateLabel = String.format(
-                                        Locale.US, "%.0f fps", Float.parseFloat(cr));
-                            } catch (Exception ignored) {}
-                        }
+            // Build multi-track audio details label
+            if (!snapshot.allAudioTrackDetails.isEmpty()) {
+                if (snapshot.allAudioTrackDetails.size() == 1) {
+                    snapshot.audioDetailsLabel = snapshot.allAudioTrackDetails.get(0);
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < snapshot.allAudioTrackDetails.size(); i++) {
+                        sb.append("Track ").append(i + 1).append(": ")
+                                .append(snapshot.allAudioTrackDetails.get(i));
+                        if (i < snapshot.allAudioTrackDetails.size() - 1) sb.append("\n");
                     }
-
-                    if (format.containsKey(MediaFormat.KEY_BIT_RATE))
-                        snapshot.bitrateLabel =
-                                formatBitrate(format.getInteger(MediaFormat.KEY_BIT_RATE));
-
-                } else if ("Unknown".equals(snapshot.audioCodecLabel)
-                        && looksLikeAudioTrack(mime, format)) {
-                    snapshot.audioCodecLabel   = prettifyCodec(mime);
-                    snapshot.audioDetailsLabel = buildAudioDetails(format);
+                    snapshot.audioDetailsLabel = sb.toString();
                 }
             }
 
@@ -381,8 +493,11 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             try { retriever.release(); } catch (Exception ignored) {}
             try { extractor.release(); } catch (Exception ignored) {}
         }
-        // FFmpeg fallback for anything still unknown
-        fillUnknownsWithFfmpeg(videoFile, snapshot);
+        // FFmpeg metadata probing is kept out of normal row binding because some files trigger
+        // a native crash in the retriever library during fast RecyclerView rebinding.
+        if (allowFfmpegFallback && shouldUseFfmpegFallback(videoFile, snapshot)) {
+            fillUnknownsWithFfmpeg(videoFile, snapshot);
+        }
 
         return snapshot;
     }
@@ -557,8 +672,26 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 String codec = ff.extractMetadata(
                         wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_AUDIO_CODEC);
                 if (codec != null && !codec.isEmpty()) {
-                    snapshot.audioCodecLabel   = codec.toUpperCase(Locale.US);
-                    snapshot.audioDetailsLabel = codec.toUpperCase(Locale.US);
+                    snapshot.audioCodecLabel = codec.toUpperCase(Locale.US);
+
+                    List<String> parts = new ArrayList<>();
+                    parts.add(codec.toUpperCase(Locale.US));
+                    if (snapshot.primaryAudioChannels   > 0) parts.add(snapshot.primaryAudioChannels   + " ch");
+                    if (snapshot.primaryAudioSampleRate > 0) parts.add(snapshot.primaryAudioSampleRate + " Hz");
+                    String enriched = TextUtils.join(" • ", parts);
+
+                    if (snapshot.allAudioTrackDetails.size() > 1) {
+                        snapshot.allAudioTrackDetails.set(0, enriched);
+                        StringBuilder sb = new StringBuilder();
+                        for (int i = 0; i < snapshot.allAudioTrackDetails.size(); i++) {
+                            sb.append("Track ").append(i + 1).append(": ")
+                                    .append(snapshot.allAudioTrackDetails.get(i));
+                            if (i < snapshot.allAudioTrackDetails.size() - 1) sb.append("\n");
+                        }
+                        snapshot.audioDetailsLabel = sb.toString();
+                    } else {
+                        snapshot.audioDetailsLabel = enriched;
+                    }
                 }
             }
 
@@ -593,6 +726,38 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         } finally {
             try { ff.release(); } catch (Exception ignored) {}
         }
+    }
+
+    private boolean shouldUseFfmpegFallback(VideoFile videoFile, MediaInfoSnapshot snapshot) {
+        String container = snapshot.containerLabel != null
+                ? snapshot.containerLabel.toUpperCase(Locale.US) : "";
+        String lowerName = videoFile.getName() != null
+                ? videoFile.getName().toLowerCase(Locale.US) : "";
+        String codec = snapshot.audioCodecLabel != null
+                ? snapshot.audioCodecLabel.toLowerCase(Locale.US) : "";
+
+        // Phone-recorded MP4/3GP files are the crash-prone path in logcat; skip FFmpeg there.
+        if ("MP4".equals(container) || "3GP".equals(container)) {
+            return lowerName.contains("eac3")
+                    || lowerName.contains("ec3")
+                    || lowerName.contains("ac3")
+                    || lowerName.contains("dts")
+                    || lowerName.contains("truehd");
+        }
+
+        if ("MKV".equals(container) || "WEBM".equals(container)) {
+            return true;
+        }
+
+        return "unknown".equals(codec)
+                || codec.contains("unsupported")
+                || codec.contains("parser")
+                || codec.contains("mkv")
+                || lowerName.contains("eac3")
+                || lowerName.contains("ec3")
+                || lowerName.contains("ac3")
+                || lowerName.contains("dts")
+                || lowerName.contains("truehd");
     }
 
     private String prettifyCodec(String mime) {
