@@ -36,7 +36,7 @@ jobs:
       - name: Build optimized release APKs
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Verify arm64 release alignment and size
+      - name: Verify arm64 release packaging and native alignment
         shell: bash
         run: |
           set -euo pipefail
@@ -55,3 +55,49 @@ jobs:
 
           "$ZIPALIGN" -c -P 16 -v 4 "$ARM64_APK"
           ls -lh "$ARM64_APK"
+
+          NATIVE_DIR="$(mktemp -d)"
+          unzip -q "$ARM64_APK" 'lib/arm64-v8a/*.so' -d "$NATIVE_DIR"
+
+          python3 - "$NATIVE_DIR" <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          libraries = sorted(root.rglob('*.so'))
+          if not libraries:
+              raise SystemExit('No arm64 native libraries found in release APK')
+
+          bad = []
+          for library in libraries:
+              output = subprocess.check_output(
+                  ['readelf', '-lW', str(library)],
+                  text=True,
+                  errors='replace',
+              )
+              alignments = []
+              for line in output.splitlines():
+                  fields = line.split()
+                  if fields and fields[0] == 'LOAD':
+                      try:
+                          alignments.append(int(fields[-1], 16))
+                      except ValueError:
+                          pass
+              minimum = min(alignments) if alignments else 0
+              print(f'{library.name}: minimum LOAD alignment = 0x{minimum:x}')
+              if minimum < 0x4000:
+                  bad.append((library.name, minimum))
+
+          if bad:
+              details = ', '.join(f'{name}=0x{alignment:x}' for name, alignment in bad)
+              raise SystemExit('Native libraries below 16 KiB ELF alignment: ' + details)
+          PY
+
+      - name: Upload optimized arm64 release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinestream-arm64-release-unsigned
+          path: app/build/outputs/apk/**/*arm64-v8a*release*.apk
+          if-no-files-found: error
+          compression-level: 9
