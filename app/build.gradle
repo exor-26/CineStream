@@ -61,6 +61,7 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-smoothstreaming:$media3_version"
     implementation "androidx.media3:media3-common:$media3_version"
     implementation "androidx.media3:media3-ui:$media3_version"
+    implementation "androidx.media3:media3-inspector:$media3_version"
     implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1"
     // Native video extensions remain after MediaCodec: hardware first, software fallback only.
     implementation files('libs/media3-decoder-av1-1.9.4.aar')
