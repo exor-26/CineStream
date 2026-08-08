@@ -1,19 +1,26 @@
 package com.example.cinestream;
 
 import android.content.Context;
+import android.os.Handler;
 
 import androidx.media3.common.Format;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlaybackException;
+import androidx.media3.exoplayer.Renderer;
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
+import androidx.media3.exoplayer.video.VideoRendererEventListener;
+
+import java.util.ArrayList;
 
 /**
  * Central policy for decoder ordering and recovery.
  *
- * The normal path prefers Android platform decoders because they can use device hardware and are
- * generally the most power-efficient option. If an audio decoder actually fails, the player can
- * rebuild once with extension renderers preferred so the bundled FFmpeg audio decoder gets first
- * chance at formats such as E-AC-3, DTS/DTS-HD and TrueHD.
+ * Platform video decoders always remain first because they are normally hardware accelerated and
+ * far more power-efficient than software video extensions. Audio starts platform-first too. If an
+ * actual audio decoder failure occurs, CineStream can rebuild once with extension audio renderers
+ * preferred so the bundled FFmpeg audio decoder gets first chance, while video still stays
+ * MediaCodec-first.
  */
 public final class PlaybackEnginePolicy {
 
@@ -29,13 +36,7 @@ public final class PlaybackEnginePolicy {
             Context context,
             DecoderMode decoderMode
     ) {
-        int extensionMode = decoderMode == DecoderMode.SOFTWARE_AUDIO_FIRST
-                ? DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON;
-
-        return new DefaultRenderersFactory(context)
-                .setExtensionRendererMode(extensionMode)
-                .setEnableDecoderFallback(true);
+        return new CineStreamRenderersFactory(context, decoderMode);
     }
 
     public static boolean shouldRetryWithSoftwareAudio(
@@ -75,5 +76,46 @@ public final class PlaybackEnginePolicy {
         return format != null
                 && format.sampleMimeType != null
                 && format.sampleMimeType.startsWith("audio/");
+    }
+
+    /**
+     * Media3 exposes one extension ordering flag for both audio and video. During an audio recovery
+     * we need FFmpeg audio before MediaCodec audio, but we must not also move dav1d/libvpx ahead of
+     * hardware video decoders. Force the video side to EXTENSION_RENDERER_MODE_ON in every mode.
+     */
+    private static final class CineStreamRenderersFactory extends DefaultRenderersFactory {
+
+        CineStreamRenderersFactory(Context context, DecoderMode decoderMode) {
+            super(context);
+            setExtensionRendererMode(
+                    decoderMode == DecoderMode.SOFTWARE_AUDIO_FIRST
+                            ? EXTENSION_RENDERER_MODE_PREFER
+                            : EXTENSION_RENDERER_MODE_ON
+            );
+            setEnableDecoderFallback(true);
+        }
+
+        @Override
+        protected void buildVideoRenderers(
+                Context context,
+                int extensionRendererMode,
+                MediaCodecSelector mediaCodecSelector,
+                boolean enableDecoderFallback,
+                Handler eventHandler,
+                VideoRendererEventListener eventListener,
+                long allowedVideoJoiningTimeMs,
+                ArrayList<Renderer> out
+        ) {
+            super.buildVideoRenderers(
+                    context,
+                    EXTENSION_RENDERER_MODE_ON,
+                    mediaCodecSelector,
+                    enableDecoderFallback,
+                    eventHandler,
+                    eventListener,
+                    allowedVideoJoiningTimeMs,
+                    out
+            );
+        }
     }
 }
