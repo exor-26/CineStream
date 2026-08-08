@@ -597,14 +597,31 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             Media3AudioMetadataProbe.Result media3 =
                     Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
             if (media3.hasAudioTracks()) {
-                snapshot.allAudioTrackDetails.clear();
-                snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
-                snapshot.audioDetailsLabel = media3.multiLineDetails();
-                if (media3.primaryCodecLabel != null && !media3.primaryCodecLabel.isEmpty()) {
+                boolean existingDetailsWeak = snapshot.allAudioTrackDetails.isEmpty()
+                        || "Unknown".equals(snapshot.audioDetailsLabel)
+                        || "Audio track present".equals(snapshot.audioDetailsLabel);
+                boolean inspectorFillsMissingTechnicalData =
+                        (snapshot.primaryAudioChannels <= 0 && media3.primaryChannelCount > 0)
+                                || (snapshot.primaryAudioSampleRate <= 0
+                                && media3.primarySampleRate > 0);
+
+                // Use inspector descriptions only when they improve incomplete platform metadata.
+                if (existingDetailsWeak || inspectorFillsMissingTechnicalData) {
+                    snapshot.allAudioTrackDetails.clear();
+                    snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
+                    snapshot.audioDetailsLabel = media3.multiLineDetails();
+                }
+                if (media3.primaryCodecLabel != null
+                        && !media3.primaryCodecLabel.isEmpty()
+                        && !"Audio".equals(media3.primaryCodecLabel)) {
                     snapshot.audioCodecLabel = media3.primaryCodecLabel;
                 }
-                snapshot.primaryAudioChannels = media3.primaryChannelCount;
-                snapshot.primaryAudioSampleRate = media3.primarySampleRate;
+                if (media3.primaryChannelCount > 0) {
+                    snapshot.primaryAudioChannels = media3.primaryChannelCount;
+                }
+                if (media3.primarySampleRate > 0) {
+                    snapshot.primaryAudioSampleRate = media3.primarySampleRate;
+                }
             }
         }
 
