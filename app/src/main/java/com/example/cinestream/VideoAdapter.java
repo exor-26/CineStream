@@ -590,8 +590,26 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             try { retriever.release(); } catch (Exception ignored) {}
             try { extractor.release(); } catch (Exception ignored) {}
         }
-        // FFmpeg metadata probing is kept out of normal row binding because some files trigger
-        // a native crash in the retriever library during fast RecyclerView rebinding.
+        // Detailed Info uses Media3's own extractor stack first. This is the same parser family
+        // used by playback and exposes per-track language, codec, channel count and sample rate
+        // more consistently than the platform MediaExtractor for formats such as E-AC-3.
+        if (allowFfmpegFallback) {
+            Media3AudioMetadataProbe.Result media3 =
+                    Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
+            if (media3.hasAudioTracks()) {
+                snapshot.allAudioTrackDetails.clear();
+                snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
+                snapshot.audioDetailsLabel = media3.multiLineDetails();
+                if (media3.primaryCodecLabel != null && !media3.primaryCodecLabel.isEmpty()) {
+                    snapshot.audioCodecLabel = media3.primaryCodecLabel;
+                }
+                snapshot.primaryAudioChannels = media3.primaryChannelCount;
+                snapshot.primaryAudioSampleRate = media3.primarySampleRate;
+            }
+        }
+
+        // FFmpeg remains a fallback for metadata Media3/platform extractors cannot resolve. It is
+        // kept out of normal row binding because some files trigger native work/crashes there.
         if (allowFfmpegFallback && shouldUseFfmpegFallback(videoFile, snapshot)) {
             fillUnknownsWithFfmpeg(videoFile, snapshot);
         }

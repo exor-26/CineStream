@@ -639,8 +639,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
             TrackGroup trackGroup = audioGroups.get(i).getMediaTrackGroup();
             for (int j = 0; j < trackGroup.length; j++) {
                 Format format = trackGroup.getFormat(j);
-                String title = buildTrackTitle("Track", j, format.language, format.label);
-                String subtitle = buildAudioTrackSubtitle(format, audioGroups.get(i).isTrackSupported(j));
+                int ordinal = actions.size() + 1;
+                String title = AudioTrackFormatter.buildTitle(ordinal, format);
+                String subtitle = AudioTrackFormatter.buildTechnicalDetails(
+                        format, audioGroups.get(i).isTrackSupported(j));
                 if (audioGroups.get(i).isTrackSelected(j)) {
                     subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
                 }
