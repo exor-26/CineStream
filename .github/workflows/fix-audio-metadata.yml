@@ -1,4 +1,4 @@
-# Validation attempt 2: formatter tests avoid Android framework stubs.
+# Validation attempt 3: use the actual Media3 VP9 JNI library name.
 name: Validate audio metadata fixes
 
 on:
@@ -82,7 +82,8 @@ jobs:
           "$ZIPALIGN" -c -P 16 -v 4 "$APK" >/dev/null
 
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/libdav1dJNI.so'
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libvpxJNI.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libvpxV2JNI.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libvpx.so'
 
       - name: Commit validated fix
         shell: bash
