@@ -1,0 +1,107 @@
+name: Build Media3 VP9 Decoder
+
+on:
+  push:
+    branches: [phase4/player-engine]
+    paths:
+      - '.github/workflows/build-vp9-decoder.yml'
+
+jobs:
+  build-vp9:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout CineStream
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK r29
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'ndk;29.0.14206865'
+
+      - name: Clone Media3 1.9.4
+        run: git clone --depth 1 --branch 1.9.4 https://github.com/androidx/media.git media3-src
+
+      - name: Build libvpx native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          MEDIA3_DIR="$GITHUB_WORKSPACE/media3-src"
+          VP9_MODULE_PATH="$MEDIA3_DIR/libraries/decoder_vp9/src/main"
+          NDK_PATH="$ANDROID_HOME/ndk/29.0.14206865"
+
+          cd "$VP9_MODULE_PATH/jni"
+          git clone https://chromium.googlesource.com/webm/libvpx \
+            --branch v1.15.2 \
+            --depth=1
+          ./generate_libvpx_android_configs.sh
+          "$NDK_PATH/ndk-build" -j4
+
+      - name: Build Media3 VP9 release AAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd media3-src
+          chmod +x gradlew
+          ./gradlew :lib-decoder-vp9:bundleReleaseAar --stacktrace
+
+      - name: Inspect native alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAR="$(find media3-src -type f -name '*.aar' -path '*decoder_vp9*' | head -n 1)"
+          if [ -z "$AAR" ]; then
+            echo 'VP9 decoder AAR was not found. Available AARs:'
+            find media3-src -type f -name '*.aar' -print || true
+            exit 1
+          fi
+
+          echo "Validating $AAR"
+          TMP="$(mktemp -d)"
+          unzip -q "$AAR" 'jni/*/*.so' -d "$TMP"
+          python3 - "$TMP" <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          libs = sorted(root.rglob('*.so'))
+          if not libs:
+              raise SystemExit('No native libraries in VP9 AAR')
+
+          bad = []
+          for lib in libs:
+              out = subprocess.check_output(['readelf', '-lW', str(lib)], text=True)
+              aligns = []
+              for line in out.splitlines():
+                  fields = line.split()
+                  if fields and fields[0] == 'LOAD':
+                      aligns.append(int(fields[-1], 16))
+              minimum = min(aligns) if aligns else 0
+              print(f'{lib}: minimum LOAD alignment = 0x{minimum:x}')
+              if minimum < 0x4000:
+                  bad.append((str(lib), minimum))
+          if bad:
+              raise SystemExit('VP9 native library is not 16 KiB compatible: ' + repr(bad))
+          PY
+
+          ls -lh "$AAR"
+          cp "$AAR" "$GITHUB_WORKSPACE/media3-decoder-vp9-1.9.4.aar"
+
+      - name: Upload VP9 decoder AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: media3-decoder-vp9-1.9.4
+          path: media3-decoder-vp9-1.9.4.aar
+          if-no-files-found: error
+          compression-level: 9
