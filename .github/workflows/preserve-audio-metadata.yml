@@ -1,0 +1,112 @@
+name: Validate audio metadata preservation
+
+on:
+  push:
+    branches: [fix/audio-metadata-preserve]
+    paths:
+      - '.github/workflows/preserve-audio-metadata.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/audio-metadata-preserve
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+
+      - name: Preserve stronger existing metadata
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/example/cinestream/VideoAdapter.java')
+          text = p.read_text()
+          old = '''        if (allowFfmpegFallback) {
+            Media3AudioMetadataProbe.Result media3 =
+                    Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
+            if (media3.hasAudioTracks()) {
+                snapshot.allAudioTrackDetails.clear();
+                snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
+                snapshot.audioDetailsLabel = media3.multiLineDetails();
+                if (media3.primaryCodecLabel != null && !media3.primaryCodecLabel.isEmpty()) {
+                    snapshot.audioCodecLabel = media3.primaryCodecLabel;
+                }
+                snapshot.primaryAudioChannels = media3.primaryChannelCount;
+                snapshot.primaryAudioSampleRate = media3.primarySampleRate;
+            }
+        }
+'''
+          new = '''        if (allowFfmpegFallback) {
+            Media3AudioMetadataProbe.Result media3 =
+                    Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
+            if (media3.hasAudioTracks()) {
+                boolean existingDetailsWeak = snapshot.allAudioTrackDetails.isEmpty()
+                        || "Unknown".equals(snapshot.audioDetailsLabel)
+                        || "Audio track present".equals(snapshot.audioDetailsLabel);
+                boolean inspectorFillsMissingTechnicalData =
+                        (snapshot.primaryAudioChannels <= 0 && media3.primaryChannelCount > 0)
+                                || (snapshot.primaryAudioSampleRate <= 0
+                                && media3.primarySampleRate > 0);
+
+                // Prefer the richer Media3 track descriptions only when the platform path had
+                // weak details or Media3 actually fills a missing channel/sample-rate field.
+                // Never replace complete platform metadata with a less-complete inspector result.
+                if (existingDetailsWeak || inspectorFillsMissingTechnicalData) {
+                    snapshot.allAudioTrackDetails.clear();
+                    snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
+                    snapshot.audioDetailsLabel = media3.multiLineDetails();
+                }
+
+                if (media3.primaryCodecLabel != null
+                        && !media3.primaryCodecLabel.isEmpty()
+                        && !"Audio".equals(media3.primaryCodecLabel)) {
+                    snapshot.audioCodecLabel = media3.primaryCodecLabel;
+                }
+                if (media3.primaryChannelCount > 0) {
+                    snapshot.primaryAudioChannels = media3.primaryChannelCount;
+                }
+                if (media3.primarySampleRate > 0) {
+                    snapshot.primaryAudioSampleRate = media3.primarySampleRate;
+                }
+            }
+        }
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one inspector block, found {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Test and build release
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleRelease --stacktrace
+
+      - name: Verify arm64 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk -type f -name '*arm64-v8a*release*.apk' | head -n 1)"
+          test -n "$APK"
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
+          "$ZIPALIGN" -c -P 16 -v 4 "$APK" >/dev/null
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libdav1dJNI.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libvpxV2JNI.so'
+
+      - name: Commit validated hardening
+        shell: bash
+        run: |
+          git rm .github/workflows/preserve-audio-metadata.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/example/cinestream/VideoAdapter.java
+          git commit -m 'Preserve stronger existing audio metadata'
+          git push origin HEAD:fix/audio-metadata-preserve
