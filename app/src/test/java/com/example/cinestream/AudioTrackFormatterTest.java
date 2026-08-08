@@ -1,7 +1,6 @@
 package com.example.cinestream;
 
 import androidx.media3.common.C;
-import androidx.media3.common.Format;
 
 import org.junit.Test;
 
@@ -12,61 +11,67 @@ public class AudioTrackFormatterTest {
 
     @Test
     public void languageBeatsPromotionalMuxerLabel() {
-        Format format = new Format.Builder()
-                .setLanguage("eng")
-                .setLabel("www.example-movies.com")
-                .setSampleMimeType("audio/eac3")
-                .setChannelCount(6)
-                .setSampleRate(48000)
-                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                .build();
-
-        assertEquals("English", AudioTrackFormatter.buildTitle(1, format));
+        assertEquals(
+                "English",
+                AudioTrackFormatter.buildTitle(
+                        1, "eng", "www.example-movies.com", /* roleFlags= */ 0)
+        );
         assertEquals(
                 "E-AC-3 • 5.1 (6 ch) • 48 kHz • Default",
-                AudioTrackFormatter.buildTechnicalDetails(format, true)
+                AudioTrackFormatter.buildTechnicalDetails(
+                        "audio/eac3",
+                        null,
+                        6,
+                        48000,
+                        C.SELECTION_FLAG_DEFAULT,
+                        true
+                )
         );
     }
 
     @Test
     public void originalRoleFromTrackLabelIsKeptWithoutUsingSiteName() {
-        Format format = new Format.Builder()
-                .setLanguage("hin")
-                .setLabel("Original Hindi")
-                .setSampleMimeType("audio/ac3")
-                .setChannelCount(2)
-                .setSampleRate(48000)
-                .build();
-
-        assertEquals("Hindi • Original", AudioTrackFormatter.buildTitle(1, format));
+        assertEquals(
+                "Hindi • Original",
+                AudioTrackFormatter.buildTitle(
+                        1, "hin", "Original Hindi", /* roleFlags= */ 0)
+        );
     }
 
     @Test
     public void dubRoleIsExplicit() {
-        Format format = new Format.Builder()
-                .setLanguage("hin")
-                .setRoleFlags(C.ROLE_FLAG_DUB)
-                .setSampleMimeType("audio/eac3-joc")
-                .setChannelCount(8)
-                .setSampleRate(48000)
-                .build();
-
-        assertEquals("Hindi • Dub", AudioTrackFormatter.buildTitle(2, format));
+        assertEquals(
+                "Hindi • Dub",
+                AudioTrackFormatter.buildTitle(
+                        2, "hin", null, C.ROLE_FLAG_DUB)
+        );
         assertEquals(
                 "E-AC-3 JOC (Atmos) • 7.1 (8 ch) • 48 kHz",
-                AudioTrackFormatter.buildTechnicalDetails(format, true)
+                AudioTrackFormatter.buildTechnicalDetails(
+                        "audio/eac3-joc",
+                        null,
+                        8,
+                        48000,
+                        0,
+                        true
+                )
         );
     }
 
     @Test
     public void unknownLanguageDoesNotExposeWebsiteLabel() {
-        Format format = new Format.Builder()
-                .setLabel("https://bad.example.com")
-                .setSampleMimeType("audio/aac")
-                .build();
-
-        String title = AudioTrackFormatter.buildTitle(3, format);
+        String title = AudioTrackFormatter.buildTitle(
+                3, null, "https://bad.example.com", /* roleFlags= */ 0);
         assertEquals("Audio 3", title);
         assertFalse(title.contains("example"));
+    }
+
+    @Test
+    public void normalHumanLabelRemainsWhenLanguageIsMissing() {
+        assertEquals(
+                "Director Commentary",
+                AudioTrackFormatter.buildTitle(
+                        2, null, "Director Commentary", /* roleFlags= */ 0)
+        );
     }
 }
