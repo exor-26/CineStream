@@ -15,6 +15,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewTreeObserver;
@@ -51,6 +52,8 @@ import java.util.Map;
 
 public class MainActivity extends AppCompatActivity implements VideoAdapter.Listener {
 
+    private static final long SEARCH_DEBOUNCE_MS = 140L;
+
     private enum ViewState { ALL_VIDEOS, FOLDER_LIST, FOLDER_CONTENTS }
     private enum PendingMediaAction { NONE, DELETE, RENAME }
 
@@ -66,18 +69,24 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private MaterialCardView searchCard;
     private EditText searchInput;
     private ImageButton searchClear;
-    private final List<VideoFile> filteredFiles = new ArrayList<>();
-    private VideoAdapter filteredAdapter;
-
-    private VideoAdapter videoAdapter;
-    private FolderAdapter folderAdapter;
 
     private final List<VideoFile> videoFiles = new ArrayList<>();
+    private final List<VideoFile> filteredFiles = new ArrayList<>();
     private final List<FolderItem> folderItems = new ArrayList<>();
+
+    private VideoAdapter videoAdapter;
+    private VideoAdapter filteredAdapter;
+    private FolderAdapter folderAdapter;
+    private VideoListDiffer videoListDiffer;
+    private VideoListDiffer filteredListDiffer;
+
+    private final Handler mainHandler = AppExecutors.mainHandler();
+    private Runnable pendingSearchRunnable;
+    private int searchGeneration = 0;
+
     private int lastNavBarInset = 0;
     private boolean initialHeaderPaddingApplied = false;
 
-    // Phase 1 runtime state. MediaStore is only queried when the library is actually dirty.
     private boolean libraryLoaded = false;
     private boolean libraryLoadInProgress = false;
     private boolean libraryDirty = true;
@@ -153,7 +162,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (resId > 0) statusBarEst = getResources().getDimensionPixelSize(resId);
         float dp = getResources().getDisplayMetrics().density;
-        int estimatedPadding = statusBarEst + (int)((12 + 59 + 8 + 48 + 8) * dp);
+        int estimatedPadding = statusBarEst + (int) ((12 + 59 + 8 + 48 + 8) * dp);
         recyclerView.setPadding(0, estimatedPadding, 0, 0);
 
         if (isLightMode()) {
@@ -170,97 +179,9 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             searchCard.setCardBackgroundColor(Color.argb(60, 255, 255, 255));
         }
 
-        filteredAdapter = new VideoAdapter(this, filteredFiles, this);
-
-        searchInput.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void afterTextChanged(android.text.Editable s) {}
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                String query = s.toString().trim().toLowerCase();
-                if (query.isEmpty()) {
-                    searchClear.setVisibility(View.GONE);
-                    if (currentState == ViewState.ALL_VIDEOS) {
-                        recyclerView.setAdapter(videoAdapter);
-                    }
-                } else {
-                    searchClear.setVisibility(View.VISIBLE);
-                    if (currentState == ViewState.ALL_VIDEOS) {
-                        filteredFiles.clear();
-                        for (VideoFile videoFile : videoFiles) {
-                            if (videoFile.getName().toLowerCase().contains(query)) {
-                                filteredFiles.add(videoFile);
-                            }
-                        }
-                        recyclerView.setAdapter(filteredAdapter);
-                        filteredAdapter.notifyDataSetChanged();
-                    }
-                }
-            }
-        });
-
-        searchClear.setOnClickListener(v -> {
-            searchInput.setText("");
-            searchInput.clearFocus();
-            android.view.inputmethod.InputMethodManager imm =
-                    (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-            if (imm != null) {
-                imm.hideSoftInputFromWindow(searchInput.getWindowToken(), 0);
-            }
-        });
-
-        ViewCompat.setOnApplyWindowInsetsListener(titleCard, (v, insets) -> {
-            int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
-            int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
-            lastNavBarInset = navBarHeight;
-
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
-                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) titleCard.getLayoutParams();
-            lp.topMargin = statusBarHeight + 12;
-            titleCard.setLayoutParams(lp);
-
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams tlp =
-                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) toggleViewBtn.getLayoutParams();
-            tlp.bottomMargin = navBarHeight + 24;
-            toggleViewBtn.setLayoutParams(tlp);
-
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams alp =
-                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) aboutBtn.getLayoutParams();
-            alp.topMargin = statusBarHeight + 12;
-            aboutBtn.setLayoutParams(alp);
-            titleCard.getViewTreeObserver().addOnGlobalLayoutListener(
-                    new ViewTreeObserver.OnGlobalLayoutListener() {
-                        @Override
-                        public void onGlobalLayout() {
-                            int cardBottom = titleCard.getBottom();
-                            if (cardBottom > 0) {
-                                int gap = (int) (8 * getResources().getDisplayMetrics().density);
-                                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams slp =
-                                        (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) searchCard.getLayoutParams();
-                                slp.topMargin = cardBottom + gap;
-                                searchCard.setLayoutParams(slp);
-
-                                searchCard.getViewTreeObserver().addOnGlobalLayoutListener(
-                                        new ViewTreeObserver.OnGlobalLayoutListener() {
-                                            @Override
-                                            public void onGlobalLayout() {
-                                                int searchBottom = searchCard.getBottom();
-                                                if (searchBottom > 0) {
-                                                    int gap2 = (int) (8 * getResources().getDisplayMetrics().density);
-                                                    recyclerView.setPadding(0, searchBottom + gap2, 0, navBarHeight);
-                                                    recyclerView.scrollToPosition(0);
-                                                    searchCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                                                }
-                                            }
-                                        });
-
-                                titleCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                            }
-                        }
-                    });
-            return insets;
-        });
+        setupRecyclerView();
+        setupSearch();
+        setupInsets();
 
         aboutBtn.setOnClickListener(v -> {
             v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
@@ -310,8 +231,173 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         });
 
         customizeStatusBar();
-        setupRecyclerView();
         checkPermissionsAndLoadFiles();
+    }
+
+    private void setupRecyclerView() {
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setHasFixedSize(true);
+
+        videoAdapter = new VideoAdapter(this, videoFiles, this);
+        filteredAdapter = new VideoAdapter(this, filteredFiles, this);
+        videoListDiffer = new VideoListDiffer(videoFiles, videoAdapter);
+        filteredListDiffer = new VideoListDiffer(filteredFiles, filteredAdapter);
+        recyclerView.setAdapter(videoAdapter);
+    }
+
+    private void setupSearch() {
+        searchInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void afterTextChanged(android.text.Editable s) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                handleSearchText(s);
+            }
+        });
+
+        searchClear.setOnClickListener(v -> {
+            searchInput.setText("");
+            searchInput.clearFocus();
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.hideSoftInputFromWindow(searchInput.getWindowToken(), 0);
+            }
+        });
+    }
+
+    private void handleSearchText(CharSequence text) {
+        final int generation = ++searchGeneration;
+        if (pendingSearchRunnable != null) {
+            mainHandler.removeCallbacks(pendingSearchRunnable);
+            pendingSearchRunnable = null;
+        }
+
+        String query = text == null ? "" : text.toString().trim().toLowerCase();
+        if (query.isEmpty()) {
+            searchClear.setVisibility(View.GONE);
+            filteredListDiffer.submit(Collections.emptyList());
+            if (currentState == ViewState.ALL_VIDEOS) {
+                recyclerView.setAdapter(videoAdapter);
+            }
+            return;
+        }
+
+        searchClear.setVisibility(View.VISIBLE);
+        if (currentState != ViewState.ALL_VIDEOS) {
+            return;
+        }
+
+        pendingSearchRunnable = () -> executeSearch(query, generation);
+        mainHandler.postDelayed(pendingSearchRunnable, SEARCH_DEBOUNCE_MS);
+    }
+
+    private void executeSearch(String query, int generation) {
+        pendingSearchRunnable = null;
+        List<VideoFile> sourceSnapshot = new ArrayList<>(videoFiles);
+
+        AppExecutors.listWork().execute(() -> {
+            List<VideoFile> matches = new ArrayList<>();
+            for (VideoFile videoFile : sourceSnapshot) {
+                String name = videoFile.getName();
+                if (name != null && name.toLowerCase().contains(query)) {
+                    matches.add(videoFile);
+                }
+            }
+
+            mainHandler.post(() -> {
+                if (generation != searchGeneration
+                        || currentState != ViewState.ALL_VIDEOS
+                        || !query.equals(currentSearchQuery())) {
+                    return;
+                }
+
+                filteredListDiffer.submit(matches, () -> {
+                    if (generation == searchGeneration
+                            && currentState == ViewState.ALL_VIDEOS
+                            && query.equals(currentSearchQuery())) {
+                        recyclerView.setAdapter(filteredAdapter);
+                    }
+                });
+            });
+        });
+    }
+
+    private void rerunCurrentSearch() {
+        String query = currentSearchQuery();
+        if (query.isEmpty() || currentState != ViewState.ALL_VIDEOS) {
+            return;
+        }
+
+        int generation = ++searchGeneration;
+        if (pendingSearchRunnable != null) {
+            mainHandler.removeCallbacks(pendingSearchRunnable);
+            pendingSearchRunnable = null;
+        }
+        executeSearch(query, generation);
+    }
+
+    private String currentSearchQuery() {
+        if (searchInput == null || searchInput.getText() == null) {
+            return "";
+        }
+        return searchInput.getText().toString().trim().toLowerCase();
+    }
+
+    private void setupInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(titleCard, (v, insets) -> {
+            int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+            lastNavBarInset = navBarHeight;
+
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) titleCard.getLayoutParams();
+            lp.topMargin = statusBarHeight + 12;
+            titleCard.setLayoutParams(lp);
+
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams tlp =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) toggleViewBtn.getLayoutParams();
+            tlp.bottomMargin = navBarHeight + 24;
+            toggleViewBtn.setLayoutParams(tlp);
+
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams alp =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) aboutBtn.getLayoutParams();
+            alp.topMargin = statusBarHeight + 12;
+            aboutBtn.setLayoutParams(alp);
+
+            titleCard.getViewTreeObserver().addOnGlobalLayoutListener(
+                    new ViewTreeObserver.OnGlobalLayoutListener() {
+                        @Override
+                        public void onGlobalLayout() {
+                            int cardBottom = titleCard.getBottom();
+                            if (cardBottom > 0) {
+                                int gap = (int) (8 * getResources().getDisplayMetrics().density);
+                                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams slp =
+                                        (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) searchCard.getLayoutParams();
+                                slp.topMargin = cardBottom + gap;
+                                searchCard.setLayoutParams(slp);
+
+                                searchCard.getViewTreeObserver().addOnGlobalLayoutListener(
+                                        new ViewTreeObserver.OnGlobalLayoutListener() {
+                                            @Override
+                                            public void onGlobalLayout() {
+                                                int searchBottom = searchCard.getBottom();
+                                                if (searchBottom > 0) {
+                                                    int gap2 = (int) (8 * getResources().getDisplayMetrics().density);
+                                                    recyclerView.setPadding(0, searchBottom + gap2, 0, navBarHeight);
+                                                    recyclerView.scrollToPosition(0);
+                                                    searchCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                                                }
+                                            }
+                                        });
+
+                                titleCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                            }
+                        }
+                    });
+            return insets;
+        });
     }
 
     @Override
@@ -321,8 +407,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             return;
         }
 
-        // Preserve the old recovery path when permission was granted from Android Settings while
-        // the Activity was paused. The in-progress guard prevents a second startup query.
         if (!libraryLoaded) {
             registerMediaObserver();
             if (!libraryLoadInProgress) {
@@ -332,8 +416,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             return;
         }
 
-        // Playback progress and last-played ordering live in SharedPreferences, so refreshing them
-        // does not require a MediaStore scan.
         if (playbackUiDirty) {
             playbackUiDirty = false;
             refreshPlaybackPresentation();
@@ -346,6 +428,14 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     @Override
     protected void onDestroy() {
+        searchGeneration++;
+        if (pendingSearchRunnable != null) {
+            mainHandler.removeCallbacks(pendingSearchRunnable);
+            pendingSearchRunnable = null;
+        }
+        if (videoListDiffer != null) videoListDiffer.cancelPending();
+        if (filteredListDiffer != null) filteredListDiffer.cancelPending();
+
         if (mediaObserver != null) {
             try {
                 getContentResolver().unregisterContentObserver(mediaObserver);
@@ -356,33 +446,41 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         super.onDestroy();
     }
 
-    private void setupRecyclerView() {
-        recyclerView.setLayoutManager(new LinearLayoutManager(this));
-        recyclerView.setHasFixedSize(true);
-        videoAdapter = new VideoAdapter(this, videoFiles, this);
-        recyclerView.setAdapter(videoAdapter);
+    private void refreshPlaybackPresentation() {
+        List<VideoFile> reordered = new ArrayList<>(videoFiles);
+        pinLastPlayed(reordered);
+        videoListDiffer.submit(reordered, () -> {
+            refreshVideoAdapter(videoAdapter);
+            refreshVideoAdapter(filteredAdapter);
+
+            RecyclerView.Adapter<?> activeAdapter = recyclerView.getAdapter();
+            if (activeAdapter instanceof VideoAdapter
+                    && activeAdapter != videoAdapter
+                    && activeAdapter != filteredAdapter) {
+                refreshVideoAdapter((VideoAdapter) activeAdapter);
+            }
+        });
     }
 
-    private void refreshPlaybackPresentation() {
-        pinLastPlayed();
-        videoAdapter.notifyDataSetChanged();
-        filteredAdapter.notifyDataSetChanged();
-
-        RecyclerView.Adapter<?> activeAdapter = recyclerView.getAdapter();
-        if (activeAdapter instanceof VideoAdapter
-                && activeAdapter != videoAdapter
-                && activeAdapter != filteredAdapter) {
-            activeAdapter.notifyDataSetChanged();
+    private void refreshVideoAdapter(VideoAdapter adapter) {
+        if (adapter != null && adapter.getItemCount() > 0) {
+            adapter.notifyItemRangeChanged(0, adapter.getItemCount());
         }
     }
 
     private void showAllVideos() {
         currentState = ViewState.ALL_VIDEOS;
         toggleIcon.setImageResource(R.drawable.folder);
-        recyclerView.setAdapter(videoAdapter);
-        videoAdapter.notifyDataSetChanged();
-        recyclerView.scrollToPosition(0);
         searchCard.setVisibility(View.VISIBLE);
+
+        String query = currentSearchQuery();
+        if (query.isEmpty()) {
+            recyclerView.setAdapter(videoAdapter);
+        } else {
+            rerunCurrentSearch();
+        }
+
+        recyclerView.scrollToPosition(0);
         int gap = (int) (8 * getResources().getDisplayMetrics().density);
         recyclerView.setPadding(0, searchCard.getBottom() + gap,
                 recyclerView.getPaddingRight(), recyclerView.getPaddingBottom());
@@ -393,9 +491,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         toggleIcon.setImageResource(R.drawable.video);
         searchCard.setVisibility(View.GONE);
         searchInput.setText("");
+
         int gap = (int) (8 * getResources().getDisplayMetrics().density);
         recyclerView.setPadding(0, titleCard.getBottom() + gap,
                 recyclerView.getPaddingRight(), recyclerView.getPaddingBottom());
+
         buildFolderList();
         folderAdapter = new FolderAdapter(this, folderItems, folder -> {
             recyclerView.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
@@ -526,7 +626,8 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         if (mediaObserver != null || !hasMediaReadPermission()) {
             return;
         }
-        mediaObserver = new ContentObserver(AppExecutors.mainHandler()) {
+
+        mediaObserver = new ContentObserver(mainHandler) {
             @Override
             public void onChange(boolean selfChange) {
                 libraryDirty = true;
@@ -537,6 +638,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 libraryDirty = true;
             }
         };
+
         try {
             getContentResolver().registerContentObserver(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
@@ -548,7 +650,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         }
     }
 
-    @SuppressLint({"NotifyDataSetChanged", "Range"})
+    @SuppressLint("Range")
     private void loadVideoFiles() {
         if (libraryLoadInProgress) {
             return;
@@ -601,10 +703,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             }
 
             final String finalErrorMessage = errorMessage;
-            AppExecutors.mainHandler().post(() -> {
+            mainHandler.post(() -> {
                 libraryLoadInProgress = false;
 
-                if (isFinishing() || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed())) {
+                if (isFinishing()
+                        || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed())) {
                     return;
                 }
 
@@ -615,35 +718,38 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                     return;
                 }
 
-                videoFiles.clear();
-                videoFiles.addAll(loadedFiles);
                 libraryLoaded = true;
-
-                if (loadedFiles.isEmpty()) {
-                    filteredFiles.clear();
-                    videoAdapter.notifyDataSetChanged();
-                    filteredAdapter.notifyDataSetChanged();
-                    recyclerView.setVisibility(View.VISIBLE);
-                    if (currentState != ViewState.ALL_VIDEOS) {
-                        showAllVideos();
-                    }
-                    GlassUi.showToast(this, "No video files found.");
-                } else {
-                    pinLastPlayed();
-                    videoAdapter.notifyDataSetChanged();
-                    filteredAdapter.notifyDataSetChanged();
-                    recyclerView.setVisibility(View.VISIBLE);
-
-                    if (currentState == ViewState.FOLDER_LIST || currentState == ViewState.FOLDER_CONTENTS) {
-                        showFolderList();
-                    }
-                }
-
-                if (libraryDirty) {
-                    loadVideoFiles();
-                }
+                pinLastPlayed(loadedFiles);
+                videoListDiffer.submit(loadedFiles,
+                        () -> onLibraryListCommitted(loadedFiles.isEmpty()));
             });
         });
+    }
+
+    private void onLibraryListCommitted(boolean empty) {
+        recyclerView.setVisibility(View.VISIBLE);
+
+        if (empty) {
+            filteredListDiffer.submit(Collections.emptyList());
+            if (currentState != ViewState.ALL_VIDEOS) {
+                showAllVideos();
+            } else {
+                recyclerView.setAdapter(videoAdapter);
+            }
+            GlassUi.showToast(this, "No video files found.");
+        } else if (currentState == ViewState.FOLDER_LIST
+                || currentState == ViewState.FOLDER_CONTENTS) {
+            showFolderList();
+        } else if (!currentSearchQuery().isEmpty()) {
+            rerunCurrentSearch();
+        } else {
+            recyclerView.setAdapter(videoAdapter);
+            filteredListDiffer.submit(Collections.emptyList());
+        }
+
+        if (libraryDirty) {
+            loadVideoFiles();
+        }
     }
 
     private String[] buildProjection() {
@@ -705,7 +811,9 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             return "Unknown";
         }
 
-        String normalized = folderKey.endsWith("/") ? folderKey.substring(0, folderKey.length() - 1) : folderKey;
+        String normalized = folderKey.endsWith("/")
+                ? folderKey.substring(0, folderKey.length() - 1)
+                : folderKey;
         int slash = normalized.lastIndexOf('/');
         if (slash >= 0 && slash < normalized.length() - 1) {
             return normalized.substring(slash + 1);
@@ -717,16 +825,16 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         return normalized;
     }
 
-    private void pinLastPlayed() {
+    private void pinLastPlayed(List<VideoFile> files) {
         String lastPlayedKey = PlaybackPrefs.getInstance(this).getLastPlayedKey();
         if (lastPlayedKey == null) {
             return;
         }
 
-        for (int i = 0; i < videoFiles.size(); i++) {
-            if (lastPlayedKey.equals(videoFiles.get(i).getPlaybackKey())) {
-                VideoFile lastPlayed = videoFiles.remove(i);
-                videoFiles.add(0, lastPlayed);
+        for (int i = 0; i < files.size(); i++) {
+            if (lastPlayedKey.equals(files.get(i).getPlaybackKey())) {
+                VideoFile lastPlayed = files.remove(i);
+                files.add(0, lastPlayed);
                 return;
             }
         }
