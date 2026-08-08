@@ -2,12 +2,14 @@ package com.example.cinestream;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
@@ -79,6 +81,14 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private int lastNavBarInset = 0;
     private boolean initialHeaderPaddingApplied = false;
 
+    // Library scans are deliberately serialized and performed away from the main thread.
+    // The dirty flag prevents the old onCreate + onResume double scan while still allowing
+    // rename/delete or external MediaStore changes to request a fresh list.
+    private boolean libraryLoaded = false;
+    private boolean libraryLoadInProgress = false;
+    private boolean libraryDirty = true;
+    private ContentObserver mediaObserver;
+
     private VideoFile pendingVideoActionFile;
     private String pendingRenameName;
     private PendingMediaAction pendingMediaAction = PendingMediaAction.NONE;
@@ -88,6 +98,8 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
                 if (isGranted) {
+                    registerMediaObserver();
+                    libraryDirty = true;
                     loadVideoFiles();
                 } else {
                     GlassUi.showToast(this, "Permission denied.");
@@ -123,9 +135,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // The blur is optional polish only. It is guarded because OEMs vary in how well they
-        // support it, and we never want startup to fail over a visual effect.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        // Keep the existing blur on normal devices, but do not spend scarce GPU/memory budget on
+        // Android's low-RAM class of devices. This is visual polish only, never app functionality.
+        ActivityManager activityManager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        boolean lowRamDevice = activityManager != null && activityManager.isLowRamDevice();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !lowRamDevice) {
             try {
                 getWindow().setBackgroundBlurRadius(40);
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
@@ -255,7 +269,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                                                 if (searchBottom > 0) {
                                                     int gap2 = (int) (8 * getResources().getDisplayMetrics().density);
                                                     recyclerView.setPadding(0, searchBottom + gap2, 0, navBarHeight);
-                                                    recyclerView.scrollToPosition(0); // ← add this
+                                                    recyclerView.scrollToPosition(0);
                                                     searchCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                                                 }
                                             }
@@ -325,16 +339,29 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     @Override
     protected void onResume() {
         super.onResume();
-        // Reload on resume so rename/delete done through system approval flows are reflected
-        // immediately when the activity comes back to the foreground.
-        if (hasMediaReadPermission()) {
+        // Initial loading is already started by onCreate. Returning from the player only triggers
+        // another MediaStore query when an observer or mutation marked the library as changed.
+        if (hasMediaReadPermission() && libraryLoaded && libraryDirty && !libraryLoadInProgress) {
             loadVideoFiles();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mediaObserver != null) {
+            try {
+                getContentResolver().unregisterContentObserver(mediaObserver);
+            } catch (Exception ignored) {
+            }
+            mediaObserver = null;
+        }
+        super.onDestroy();
     }
 
     private void setupRecyclerView() {
         // A simple linear list keeps the media browser fast and familiar.
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setHasFixedSize(true);
         videoAdapter = new VideoAdapter(this, videoFiles, this);
         recyclerView.setAdapter(videoAdapter);
     }
@@ -459,7 +486,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         });
     }
 
-
     private void customizeStatusBar() {
         // We opt into edge-to-edge layout, then adjust icon appearance based on the current theme.
         Window window = getWindow();
@@ -484,6 +510,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             requestPermissionLauncher.launch(getReadPermission());
             return;
         }
+        registerMediaObserver();
         loadVideoFiles();
     }
 
@@ -498,66 +525,132 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 : Manifest.permission.READ_EXTERNAL_STORAGE;
     }
 
+    private void registerMediaObserver() {
+        if (mediaObserver != null || !hasMediaReadPermission()) {
+            return;
+        }
+        mediaObserver = new ContentObserver(AppExecutors.mainHandler()) {
+            @Override
+            public void onChange(boolean selfChange) {
+                libraryDirty = true;
+            }
+
+            @Override
+            public void onChange(boolean selfChange, Uri uri) {
+                libraryDirty = true;
+            }
+        };
+        try {
+            getContentResolver().registerContentObserver(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    true,
+                    mediaObserver
+            );
+        } catch (Exception e) {
+            mediaObserver = null;
+        }
+    }
+
     @SuppressLint({"NotifyDataSetChanged", "Range"})
     private void loadVideoFiles() {
-        // MediaStore is now the single source of truth. We no longer depend on broad storage
-        // permissions or raw file enumeration to discover local videos.
-        Uri collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
-        String[] projection = buildProjection();
-        String sortOrder = MediaStore.Video.Media.DATE_MODIFIED + " DESC";
-
-        try (Cursor cursor = getContentResolver().query(collection, projection, null, null, sortOrder)) {
-            if (cursor == null || !cursor.moveToFirst()) {
-                videoFiles.clear();
-                filteredFiles.clear();
-                videoAdapter.notifyDataSetChanged();
-                filteredAdapter.notifyDataSetChanged();
-                recyclerView.setVisibility(View.VISIBLE);
-                if (currentState != ViewState.ALL_VIDEOS) {
-                    showAllVideos();
-                }
-                GlassUi.showToast(this, "No video files found.");
-                return;
-            }
-
-            videoFiles.clear();
-            do {
-                // Store both display-friendly metadata and the content Uri needed for playback,
-                // sharing, rename, and delete flows under scoped storage.
-                long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID));
-                String displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME));
-                long dateModified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED));
-                long sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE));
-                Uri contentUri = ContentUris.withAppendedId(collection, id);
-
-                String folderKey = resolveFolderKey(cursor);
-                String folderName = resolveFolderName(cursor, folderKey);
-
-                videoFiles.add(new VideoFile(
-                        id,
-                        displayName,
-                        contentUri,
-                        sizeBytes,
-                        dateModified,
-                        folderName,
-                        folderKey,
-                        "media:" + id
-                ));
-            } while (cursor.moveToNext());
-
-            pinLastPlayed();
-            videoAdapter.notifyDataSetChanged();
-            filteredAdapter.notifyDataSetChanged();
-            recyclerView.setVisibility(View.VISIBLE);
-
-            if (currentState == ViewState.FOLDER_LIST || currentState == ViewState.FOLDER_CONTENTS) {
-                showFolderList();
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            recyclerView.setVisibility(View.VISIBLE);
-            GlassUi.showToast(this, "Error loading videos: " + e.getMessage());
+        if (libraryLoadInProgress) {
+            return;
         }
+
+        libraryLoadInProgress = true;
+        libraryDirty = false;
+
+        final Uri collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+        final String[] projection = buildProjection();
+        final String sortOrder = MediaStore.Video.Media.DATE_MODIFIED + " DESC";
+
+        AppExecutors.mediaIo().execute(() -> {
+            List<VideoFile> loadedFiles = new ArrayList<>();
+            String errorMessage = null;
+
+            try (Cursor cursor = getContentResolver().query(
+                    collection,
+                    projection,
+                    null,
+                    null,
+                    sortOrder
+            )) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    do {
+                        // Build a detached result list off-thread. RecyclerView data itself is only
+                        // replaced on the main thread after the complete cursor has been consumed.
+                        long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID));
+                        String displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME));
+                        long dateModified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED));
+                        long sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE));
+                        Uri contentUri = ContentUris.withAppendedId(collection, id);
+
+                        String folderKey = resolveFolderKey(cursor);
+                        String folderName = resolveFolderName(cursor, folderKey);
+
+                        loadedFiles.add(new VideoFile(
+                                id,
+                                displayName,
+                                contentUri,
+                                sizeBytes,
+                                dateModified,
+                                folderName,
+                                folderKey,
+                                "media:" + id
+                        ));
+                    } while (cursor.moveToNext());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                errorMessage = e.getMessage();
+            }
+
+            final String finalErrorMessage = errorMessage;
+            AppExecutors.mainHandler().post(() -> {
+                libraryLoadInProgress = false;
+
+                if (isFinishing() || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed())) {
+                    return;
+                }
+
+                if (finalErrorMessage != null) {
+                    libraryDirty = true;
+                    recyclerView.setVisibility(View.VISIBLE);
+                    GlassUi.showToast(this, "Error loading videos: " + finalErrorMessage);
+                    return;
+                }
+
+                videoFiles.clear();
+                videoFiles.addAll(loadedFiles);
+                libraryLoaded = true;
+
+                if (loadedFiles.isEmpty()) {
+                    filteredFiles.clear();
+                    videoAdapter.notifyDataSetChanged();
+                    filteredAdapter.notifyDataSetChanged();
+                    recyclerView.setVisibility(View.VISIBLE);
+                    if (currentState != ViewState.ALL_VIDEOS) {
+                        showAllVideos();
+                    }
+                    GlassUi.showToast(this, "No video files found.");
+                } else {
+                    pinLastPlayed();
+                    videoAdapter.notifyDataSetChanged();
+                    filteredAdapter.notifyDataSetChanged();
+                    recyclerView.setVisibility(View.VISIBLE);
+
+                    if (currentState == ViewState.FOLDER_LIST || currentState == ViewState.FOLDER_CONTENTS) {
+                        showFolderList();
+                    }
+                }
+
+                // If MediaStore changed while this cursor was being read, run one fresh pass after
+                // the current result is safely applied rather than racing two simultaneous scans.
+                if (libraryDirty) {
+                    loadVideoFiles();
+                }
+            });
+        });
     }
 
     private String[] buildProjection() {
@@ -840,14 +933,10 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void reloadAfterMutation() {
-        // Re-query from MediaStore after any mutation so folder counts, ordering, and names stay
-        // aligned with the actual system media database.
+        // The mutation itself already changed MediaStore. Mark the library dirty and let the same
+        // serialized background loader refresh names, folder counts, and ordering.
+        libraryDirty = true;
         loadVideoFiles();
-        if (currentState == ViewState.FOLDER_LIST || currentState == ViewState.FOLDER_CONTENTS) {
-            showFolderList();
-        } else {
-            showAllVideos();
-        }
     }
 
     private void clearPendingMediaAction() {
