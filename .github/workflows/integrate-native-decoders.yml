@@ -1,0 +1,169 @@
+name: Integrate Phase 4 Native Decoders
+
+on:
+  push:
+    branches: [phase4/player-engine]
+    paths:
+      - '.github/workflows/integrate-native-decoders.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Phase 4 branch
+        uses: actions/checkout@v4
+        with:
+          ref: phase4/player-engine
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Download validated decoder artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/libs /tmp/av1 /tmp/vp9
+
+          curl -L --fail --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/9026561392/zip" \
+            -o /tmp/av1.zip
+          unzip -q /tmp/av1.zip -d /tmp/av1
+          cp "$(find /tmp/av1 -type f -name '*.aar' | head -n 1)" \
+            app/libs/media3-decoder-av1-1.9.4.aar
+
+          curl -L --fail --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/9026637297/zip" \
+            -o /tmp/vp9.zip
+          unzip -q /tmp/vp9.zip -d /tmp/vp9
+          cp "$(find /tmp/vp9 -type f -name '*.aar' | head -n 1)" \
+            app/libs/media3-decoder-vp9-1.9.4.aar
+
+          echo '7329c6b0f7871f474aff31816d287c59c54b00edac356d657e4ba600333a3c3a  app/libs/media3-decoder-av1-1.9.4.aar' | sha256sum -c -
+          echo '04304684e1a503d32c21980957ce9671c748c27bdf02722ed3f32ae7b2573254  app/libs/media3-decoder-vp9-1.9.4.aar' | sha256sum -c -
+          ls -lh app/libs/media3-decoder-*.aar
+
+      - name: Wire decoder AARs into CineStream
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          build = Path('app/build.gradle')
+          text = build.read_text()
+          av1 = "    implementation files('libs/media3-decoder-av1-1.9.4.aar')\n"
+          vp9 = "    implementation files('libs/media3-decoder-vp9-1.9.4.aar')\n"
+          if av1 not in text or vp9 not in text:
+              needle = '    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1"\n'
+              if needle not in text:
+                  raise SystemExit('FFmpeg dependency anchor not found in app/build.gradle')
+              text = text.replace(
+                  needle,
+                  needle
+                  + '    // Native video extensions remain after MediaCodec: hardware first, software fallback only.\n'
+                  + av1
+                  + vp9,
+                  1,
+              )
+              build.write_text(text)
+
+          rules = Path('app/proguard-rules.pro')
+          p = rules.read_text()
+          keep = """
+
+          # Media3 loads native video extension renderers by reflection. Keep the concrete classes
+          # so R8 cannot remove or rename the fallback entry points in release builds.
+          -keep class androidx.media3.decoder.av1.Libdav1dVideoRenderer { *; }
+          -keep class androidx.media3.decoder.vp9.LibvpxVideoRenderer { *; }
+          """.replace('          ', '')
+          if 'androidx.media3.decoder.av1.Libdav1dVideoRenderer' not in p:
+              rules.write_text(p.rstrip() + keep + '\n')
+          PY
+
+          git diff -- app/build.gradle app/proguard-rules.pro
+
+      - name: Build and test integrated release
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug assembleRelease --stacktrace
+
+      - name: Verify final arm64 decoder packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARM64_APK="$(find app/build/outputs/apk -type f -name '*arm64-v8a*release*.apk' | head -n 1)"
+          test -n "$ARM64_APK"
+          echo "Validating $ARM64_APK"
+          ls -lh "$ARM64_APK"
+
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
+          "$ZIPALIGN" -c -P 16 -v 4 "$ARM64_APK"
+
+          TMP="$(mktemp -d)"
+          unzip -q "$ARM64_APK" 'lib/arm64-v8a/*.so' 'classes*.dex' -d "$TMP"
+
+          for expected in libdav1dJNI.so libvpx.so libvpxV2JNI.so; do
+            test -f "$TMP/lib/arm64-v8a/$expected" || {
+              echo "Missing required native fallback: $expected"
+              exit 1
+            }
+          done
+
+          python3 - "$TMP/lib/arm64-v8a" <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          bad = []
+          for lib in sorted(root.glob('*.so')):
+              output = subprocess.check_output(['readelf', '-lW', str(lib)], text=True)
+              aligns = [int(line.split()[-1], 16) for line in output.splitlines()
+                        if line.split() and line.split()[0] == 'LOAD']
+              minimum = min(aligns) if aligns else 0
+              print(f'{lib.name}: minimum LOAD alignment = 0x{minimum:x}')
+              if minimum < 0x4000:
+                  bad.append((lib.name, minimum))
+          if bad:
+              raise SystemExit('arm64 native library below 16 KiB alignment: ' + repr(bad))
+          PY
+
+          strings "$TMP"/classes*.dex | grep -F 'androidx/media3/decoder/av1/Libdav1dVideoRenderer' >/dev/null
+          strings "$TMP"/classes*.dex | grep -F 'androidx/media3/decoder/vp9/LibvpxVideoRenderer' >/dev/null
+
+      - name: Commit integrated decoder binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            app/libs/media3-decoder-av1-1.9.4.aar \
+            app/libs/media3-decoder-vp9-1.9.4.aar \
+            app/build.gradle \
+            app/proguard-rules.pro
+          git diff --cached --stat
+          git commit -m 'Bundle native AV1 and VP9 video fallbacks'
+          git push origin HEAD:phase4/player-engine
