@@ -317,13 +317,23 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     @Override
     protected void onResume() {
         super.onResume();
-        if (!hasMediaReadPermission() || !libraryLoaded) {
+        if (!hasMediaReadPermission()) {
+            return;
+        }
+
+        // Preserve the old recovery path when permission was granted from Android Settings while
+        // the Activity was paused. The in-progress guard prevents a second startup query.
+        if (!libraryLoaded) {
+            registerMediaObserver();
+            if (!libraryLoadInProgress) {
+                libraryDirty = true;
+                loadVideoFiles();
+            }
             return;
         }
 
         // Playback progress and last-played ordering live in SharedPreferences, so refreshing them
-        // does not require a MediaStore scan. This preserves the old visible resume behavior while
-        // avoiding disk/provider work every time the player closes.
+        // does not require a MediaStore scan.
         if (playbackUiDirty) {
             playbackUiDirty = false;
             refreshPlaybackPresentation();
