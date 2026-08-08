@@ -6,13 +6,7 @@ import android.os.Looper;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * App-lifetime executors for media work.
- *
- * Keeping these pools shared avoids creating new worker threads every time a RecyclerView
- * adapter is created for search or folder views. MediaStore scans are serialized separately
- * from metadata work so a large library refresh cannot compete with multiple parser jobs.
- */
+/** Shared app-lifetime executors for media, metadata and list/search work. */
 public final class AppExecutors {
 
     private static final ExecutorService MEDIA_IO = Executors.newSingleThreadExecutor(r -> {
@@ -23,6 +17,12 @@ public final class AppExecutors {
 
     private static final ExecutorService METADATA = Executors.newFixedThreadPool(2, r -> {
         Thread thread = new Thread(r, "cinestream-metadata");
+        thread.setPriority(Thread.NORM_PRIORITY - 1);
+        return thread;
+    });
+
+    private static final ExecutorService LIST_WORK = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "cinestream-list-work");
         thread.setPriority(Thread.NORM_PRIORITY - 1);
         return thread;
     });
@@ -38,6 +38,10 @@ public final class AppExecutors {
 
     public static ExecutorService metadata() {
         return METADATA;
+    }
+
+    public static ExecutorService listWork() {
+        return LIST_WORK;
     }
 
     public static Handler mainHandler() {
