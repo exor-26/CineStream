@@ -168,7 +168,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
         holder.videoSize.setText(getFileSize(videoFile.getSizeBytes()));
 
-        // Click handlers must be attached for every bind. If they live below the metadata-cache
+        // Click handlers must be attached for every bind. If they live below a metadata-cache
         // fast path, recycled rows can lose their play/open behavior after rebinding.
         holder.itemView.setOnClickListener(v -> {
             int adapterPosition = holder.getBindingAdapterPosition();
@@ -195,7 +195,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 } else if (item.id == ACTION_RENAME) {
                     listener.onRenameVideo(videoFile);
                 } else if (item.id == ACTION_INFO) {
-                    // Off main thread — avoids ANR on large files.
+                    // Detailed Info intentionally keeps the complete parser + FFmpeg fallback.
                     EXECUTOR.execute(() -> {
                         MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, true);
                         MAIN_HANDLER.post(() -> showVideoInfo(videoFile, snapshot));
@@ -207,11 +207,80 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             return true;
         });
 
-        // ── Metadata extraction — off UI thread ──────────────────────
+        bindRowMetadata(holder, videoFile, playbackKey);
+    }
+
+    /**
+     * Normal rows only require duration and a quality badge. Ask MediaStore first because Android
+     * has already indexed those values. The old file parser remains the fallback for missing data.
+     */
+    private void bindRowMetadata(
+            VideoViewHolder holder,
+            VideoFile videoFile,
+            String playbackKey
+    ) {
+        MediaStoreMetadataIndex.IndexedMetadata cached =
+                MediaStoreMetadataIndex.peek(videoFile.getId());
+
+        if (cached != null && applyIndexedMetadata(holder, playbackKey, cached)) {
+            return;
+        }
+
+        MediaStoreMetadataIndex.request(context, videoFile.getId(), indexed -> {
+            if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                return;
+            }
+
+            boolean complete = indexed != null
+                    && applyIndexedMetadata(holder, playbackKey, indexed);
+            if (!complete) {
+                loadFallbackRowMetadata(holder, videoFile, playbackKey, indexed);
+            }
+        });
+    }
+
+    /**
+     * @return true when both row values were satisfied without opening the media file.
+     */
+    private boolean applyIndexedMetadata(
+            VideoViewHolder holder,
+            String playbackKey,
+            MediaStoreMetadataIndex.IndexedMetadata indexed
+    ) {
+        if (!playbackKey.equals(holder.boundPlaybackKey) || indexed == null) {
+            return false;
+        }
+
+        if (indexed.hasDuration()) {
+            holder.videoDuration.setText(formatDuration(indexed.durationMs));
+        }
+        if (indexed.hasResolution()) {
+            holder.videoQuality.setText(getQualityLabel(indexed.width, indexed.height));
+        }
+        return indexed.hasDuration() && indexed.hasResolution();
+    }
+
+    private void loadFallbackRowMetadata(
+            VideoViewHolder holder,
+            VideoFile videoFile,
+            String playbackKey,
+            MediaStoreMetadataIndex.IndexedMetadata indexed
+    ) {
+        boolean needDuration = indexed == null || !indexed.hasDuration();
+        boolean needQuality = indexed == null || !indexed.hasResolution();
+        if (!needDuration && !needQuality) {
+            return;
+        }
+
         MediaInfoSnapshot cachedSnapshot = MEDIA_INFO_CACHE.get(playbackKey);
         if (cachedSnapshot != null) {
-            holder.videoDuration.setText(cachedSnapshot.durationLabel);
-            holder.videoQuality.setText(cachedSnapshot.qualityLabel);
+            applyFallbackRowValues(
+                    holder,
+                    playbackKey,
+                    cachedSnapshot,
+                    needDuration,
+                    needQuality
+            );
             return;
         }
 
@@ -219,13 +288,33 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, false);
             MAIN_HANDLER.post(() -> {
                 MEDIA_INFO_CACHE.put(playbackKey, snapshot);
-                if (!playbackKey.equals(holder.boundPlaybackKey)) {
-                    return;
-                }
-                holder.videoDuration.setText(snapshot.durationLabel);
-                holder.videoQuality.setText(snapshot.qualityLabel);
+                applyFallbackRowValues(
+                        holder,
+                        playbackKey,
+                        snapshot,
+                        needDuration,
+                        needQuality
+                );
             });
         });
+    }
+
+    private void applyFallbackRowValues(
+            VideoViewHolder holder,
+            String playbackKey,
+            MediaInfoSnapshot snapshot,
+            boolean needDuration,
+            boolean needQuality
+    ) {
+        if (!playbackKey.equals(holder.boundPlaybackKey)) {
+            return;
+        }
+        if (needDuration) {
+            holder.videoDuration.setText(snapshot.durationLabel);
+        }
+        if (needQuality) {
+            holder.videoQuality.setText(snapshot.qualityLabel);
+        }
     }
 
     @Override
@@ -638,10 +727,15 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     @SuppressLint("DefaultLocale")
     private String formatDuration(String duration) {
         if (duration == null) return "Unknown";
-        long ms      = parseLong(duration);
-        long hours   = (ms / 1000) / 3600;
-        long minutes = ((ms / 1000) % 3600) / 60;
-        long seconds = (ms / 1000) % 60;
+        return formatDuration(parseLong(duration));
+    }
+
+    @SuppressLint("DefaultLocale")
+    private String formatDuration(long ms) {
+        long safeMs  = Math.max(0L, ms);
+        long hours   = (safeMs / 1000) / 3600;
+        long minutes = ((safeMs / 1000) % 3600) / 60;
+        long seconds = (safeMs / 1000) % 60;
         return hours > 0
                 ? String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
                 : String.format(Locale.US, "%02d:%02d", minutes, seconds);
