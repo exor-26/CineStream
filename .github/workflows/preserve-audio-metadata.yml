@@ -30,59 +30,24 @@ jobs:
           from pathlib import Path
           p = Path('app/src/main/java/com/example/cinestream/VideoAdapter.java')
           text = p.read_text()
-          old = '''        if (allowFfmpegFallback) {
-            Media3AudioMetadataProbe.Result media3 =
-                    Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
-            if (media3.hasAudioTracks()) {
-                snapshot.allAudioTrackDetails.clear();
-                snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
-                snapshot.audioDetailsLabel = media3.multiLineDetails();
-                if (media3.primaryCodecLabel != null && !media3.primaryCodecLabel.isEmpty()) {
-                    snapshot.audioCodecLabel = media3.primaryCodecLabel;
-                }
-                snapshot.primaryAudioChannels = media3.primaryChannelCount;
-                snapshot.primaryAudioSampleRate = media3.primarySampleRate;
-            }
-        }
-'''
-          new = '''        if (allowFfmpegFallback) {
-            Media3AudioMetadataProbe.Result media3 =
-                    Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
-            if (media3.hasAudioTracks()) {
-                boolean existingDetailsWeak = snapshot.allAudioTrackDetails.isEmpty()
-                        || "Unknown".equals(snapshot.audioDetailsLabel)
-                        || "Audio track present".equals(snapshot.audioDetailsLabel);
-                boolean inspectorFillsMissingTechnicalData =
-                        (snapshot.primaryAudioChannels <= 0 && media3.primaryChannelCount > 0)
-                                || (snapshot.primaryAudioSampleRate <= 0
-                                && media3.primarySampleRate > 0);
 
-                // Prefer the richer Media3 track descriptions only when the platform path had
-                // weak details or Media3 actually fills a missing channel/sample-rate field.
-                // Never replace complete platform metadata with a less-complete inspector result.
-                if (existingDetailsWeak || inspectorFillsMissingTechnicalData) {
-                    snapshot.allAudioTrackDetails.clear();
-                    snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
-                    snapshot.audioDetailsLabel = media3.multiLineDetails();
-                }
+          old_details = "                snapshot.allAudioTrackDetails.clear();\n                snapshot.allAudioTrackDetails.addAll(media3.trackDetails);\n                snapshot.audioDetailsLabel = media3.multiLineDetails();"
+          new_details = "                boolean existingDetailsWeak = snapshot.allAudioTrackDetails.isEmpty()\n                        || \"Unknown\".equals(snapshot.audioDetailsLabel)\n                        || \"Audio track present\".equals(snapshot.audioDetailsLabel);\n                boolean inspectorFillsMissingTechnicalData =\n                        (snapshot.primaryAudioChannels <= 0 && media3.primaryChannelCount > 0)\n                                || (snapshot.primaryAudioSampleRate <= 0\n                                && media3.primarySampleRate > 0);\n\n                // Use inspector descriptions only when they improve incomplete platform metadata.\n                if (existingDetailsWeak || inspectorFillsMissingTechnicalData) {\n                    snapshot.allAudioTrackDetails.clear();\n                    snapshot.allAudioTrackDetails.addAll(media3.trackDetails);\n                    snapshot.audioDetailsLabel = media3.multiLineDetails();\n                }"
+          if text.count(old_details) != 1:
+              raise SystemExit(f'Expected one details block, found {text.count(old_details)}')
+          text = text.replace(old_details, new_details, 1)
 
-                if (media3.primaryCodecLabel != null
-                        && !media3.primaryCodecLabel.isEmpty()
-                        && !"Audio".equals(media3.primaryCodecLabel)) {
-                    snapshot.audioCodecLabel = media3.primaryCodecLabel;
-                }
-                if (media3.primaryChannelCount > 0) {
-                    snapshot.primaryAudioChannels = media3.primaryChannelCount;
-                }
-                if (media3.primarySampleRate > 0) {
-                    snapshot.primaryAudioSampleRate = media3.primarySampleRate;
-                }
-            }
-        }
-'''
-          if text.count(old) != 1:
-              raise SystemExit(f'Expected one inspector block, found {text.count(old)}')
-          p.write_text(text.replace(old, new, 1))
+          old_codec = "                if (media3.primaryCodecLabel != null && !media3.primaryCodecLabel.isEmpty()) {\n                    snapshot.audioCodecLabel = media3.primaryCodecLabel;\n                }"
+          new_codec = "                if (media3.primaryCodecLabel != null\n                        && !media3.primaryCodecLabel.isEmpty()\n                        && !\"Audio\".equals(media3.primaryCodecLabel)) {\n                    snapshot.audioCodecLabel = media3.primaryCodecLabel;\n                }"
+          if text.count(old_codec) != 1:
+              raise SystemExit(f'Expected one codec block, found {text.count(old_codec)}')
+          text = text.replace(old_codec, new_codec, 1)
+
+          old_scalars = "                snapshot.primaryAudioChannels = media3.primaryChannelCount;\n                snapshot.primaryAudioSampleRate = media3.primarySampleRate;"
+          new_scalars = "                if (media3.primaryChannelCount > 0) {\n                    snapshot.primaryAudioChannels = media3.primaryChannelCount;\n                }\n                if (media3.primarySampleRate > 0) {\n                    snapshot.primaryAudioSampleRate = media3.primarySampleRate;\n                }"
+          if text.count(old_scalars) != 1:
+              raise SystemExit(f'Expected one scalar block, found {text.count(old_scalars)}')
+          p.write_text(text.replace(old_scalars, new_scalars, 1))
           PY
 
       - name: Test and build release
