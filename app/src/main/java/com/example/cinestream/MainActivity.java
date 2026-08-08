@@ -51,11 +51,7 @@ import java.util.Map;
 
 public class MainActivity extends AppCompatActivity implements VideoAdapter.Listener {
 
-    // The home screen only has three real modes. Keeping them explicit makes back-navigation
-    // predictable and avoids brittle "which adapter is active?" checks.
     private enum ViewState { ALL_VIDEOS, FOLDER_LIST, FOLDER_CONTENTS }
-    // Storage mutations can require a system approval round-trip, so we keep track of the
-    // action that was in progress before Android temporarily leaves our app.
     private enum PendingMediaAction { NONE, DELETE, RENAME }
 
     private ViewState currentState = ViewState.ALL_VIDEOS;
@@ -81,20 +77,17 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private int lastNavBarInset = 0;
     private boolean initialHeaderPaddingApplied = false;
 
-    // Library scans are deliberately serialized and performed away from the main thread.
-    // The dirty flag prevents the old onCreate + onResume double scan while still allowing
-    // rename/delete or external MediaStore changes to request a fresh list.
+    // Phase 1 runtime state. MediaStore is only queried when the library is actually dirty.
     private boolean libraryLoaded = false;
     private boolean libraryLoadInProgress = false;
     private boolean libraryDirty = true;
+    private boolean playbackUiDirty = false;
     private ContentObserver mediaObserver;
 
     private VideoFile pendingVideoActionFile;
     private String pendingRenameName;
     private PendingMediaAction pendingMediaAction = PendingMediaAction.NONE;
 
-    // Runtime media permission is the only permission we ask for now. Once granted, the app
-    // can load the library directly from MediaStore without broad file-manager access.
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
                 if (isGranted) {
@@ -106,8 +99,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 }
             });
 
-    // Rename/delete on Android 10+ may require a user-confirmation intent from MediaStore.
-    // This launcher resumes the original operation after the system prompt returns.
     private final ActivityResultLauncher<IntentSenderRequest> mediaActionLauncher =
             registerForActivityResult(new ActivityResultContracts.StartIntentSenderForResult(), result -> {
                 if (result.getResultCode() != RESULT_OK || pendingVideoActionFile == null) {
@@ -135,8 +126,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Keep the existing blur on normal devices, but do not spend scarce GPU/memory budget on
-        // Android's low-RAM class of devices. This is visual polish only, never app functionality.
         ActivityManager activityManager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
         boolean lowRamDevice = activityManager != null && activityManager.isLowRamDevice();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !lowRamDevice) {
@@ -160,17 +149,13 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         searchInput = findViewById(R.id.searchInput);
         searchClear = findViewById(R.id.searchClear);
 
-        // ── Immediate estimated padding — prevents first-frame jump ──────
         int statusBarEst = 0;
         int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (resId > 0) statusBarEst = getResources().getDimensionPixelSize(resId);
         float dp = getResources().getDisplayMetrics().density;
-        // statusBar + 12dp margin + 59dp titleCard + 8dp gap + 48dp searchCard + 8dp gap
         int estimatedPadding = statusBarEst + (int)((12 + 59 + 8 + 48 + 8) * dp);
         recyclerView.setPadding(0, estimatedPadding, 0, 0);
 
-        // The cards use slightly different alpha in light and dark mode so the frosted look
-        // stays visible without feeling muddy or washed out.
         if (isLightMode()) {
             titleCard.setCardBackgroundColor(Color.argb(180, 255, 255, 255));
             aboutBtn.setCardBackgroundColor(Color.argb(200, 240, 240, 245));
@@ -193,8 +178,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
-                // Search is intentionally limited to the "all videos" view. Folder mode should
-                // stay focused on structure, while the top-level list handles broad discovery.
                 String query = s.toString().trim().toLowerCase();
                 if (query.isEmpty()) {
                     searchClear.setVisibility(View.GONE);
@@ -220,7 +203,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         searchClear.setOnClickListener(v -> {
             searchInput.setText("");
             searchInput.clearFocus();
-            // We explicitly close the keyboard so clearing search feels complete.
             android.view.inputmethod.InputMethodManager imm =
                     (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
             if (imm != null) {
@@ -228,8 +210,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             }
         });
 
-        // Insets are handled manually because the screen is designed edge-to-edge and the title,
-        // search bar, and floating toggle button all need to dodge system bars cleanly.
         ViewCompat.setOnApplyWindowInsetsListener(titleCard, (v, insets) -> {
             int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
             int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
@@ -281,13 +261,13 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                     });
             return insets;
         });
+
         aboutBtn.setOnClickListener(v -> {
             v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
             showAboutDialog();
         });
+
         toggleViewBtn.setOnClickListener(v -> {
-            // The button is effectively a mode switch, so it gets both haptic and scale feedback
-            // to make the transition feel deliberate.
             v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
             v.animate()
                     .scaleX(0.85f)
@@ -308,8 +288,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             }
         });
 
-        // Back behaves like navigation inside the app until we are back at the main all-videos
-        // state, then we let the normal system back behavior finish the activity.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -339,9 +317,19 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     @Override
     protected void onResume() {
         super.onResume();
-        // Initial loading is already started by onCreate. Returning from the player only triggers
-        // another MediaStore query when an observer or mutation marked the library as changed.
-        if (hasMediaReadPermission() && libraryLoaded && libraryDirty && !libraryLoadInProgress) {
+        if (!hasMediaReadPermission() || !libraryLoaded) {
+            return;
+        }
+
+        // Playback progress and last-played ordering live in SharedPreferences, so refreshing them
+        // does not require a MediaStore scan. This preserves the old visible resume behavior while
+        // avoiding disk/provider work every time the player closes.
+        if (playbackUiDirty) {
+            playbackUiDirty = false;
+            refreshPlaybackPresentation();
+        }
+
+        if (libraryDirty && !libraryLoadInProgress) {
             loadVideoFiles();
         }
     }
@@ -359,15 +347,26 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void setupRecyclerView() {
-        // A simple linear list keeps the media browser fast and familiar.
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         recyclerView.setHasFixedSize(true);
         videoAdapter = new VideoAdapter(this, videoFiles, this);
         recyclerView.setAdapter(videoAdapter);
     }
 
+    private void refreshPlaybackPresentation() {
+        pinLastPlayed();
+        videoAdapter.notifyDataSetChanged();
+        filteredAdapter.notifyDataSetChanged();
+
+        RecyclerView.Adapter<?> activeAdapter = recyclerView.getAdapter();
+        if (activeAdapter instanceof VideoAdapter
+                && activeAdapter != videoAdapter
+                && activeAdapter != filteredAdapter) {
+            activeAdapter.notifyDataSetChanged();
+        }
+    }
+
     private void showAllVideos() {
-        // Restore the primary browsing mode with search visible.
         currentState = ViewState.ALL_VIDEOS;
         toggleIcon.setImageResource(R.drawable.folder);
         recyclerView.setAdapter(videoAdapter);
@@ -380,7 +379,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void showFolderList() {
-        // Folder mode hides search because the user is navigating structure instead of querying.
         currentState = ViewState.FOLDER_LIST;
         toggleIcon.setImageResource(R.drawable.video);
         searchCard.setVisibility(View.GONE);
@@ -398,8 +396,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void showFolderContents(FolderItem folder) {
-        // Folder contents are not separately queried from MediaStore; they are derived from the
-        // already loaded library list for speed and to keep sorting consistent.
         currentState = ViewState.FOLDER_CONTENTS;
         int gap = (int) (8 * getResources().getDisplayMetrics().density);
         recyclerView.setPadding(0, titleCard.getBottom() + gap,
@@ -418,8 +414,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void buildFolderList() {
-        // LinkedHashMap preserves insertion order so the folder list feels stable between
-        // refreshes and mirrors the order in which videos were loaded.
         folderItems.clear();
         Map<String, FolderItem> folderMap = new LinkedHashMap<>();
         for (VideoFile videoFile : videoFiles) {
@@ -440,8 +434,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void applyScrollOpacity(RecyclerView rv) {
-        // Fade the rows under the title area so the glass header feels visually anchored instead
-        // of floating awkwardly over fully opaque content.
         if (titleCard == null) return;
         float fadeEnd = titleCard.getBottom();
         float fadeZone = titleCard.getHeight();
@@ -460,9 +452,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void prepareInitialHeaderPadding() {
-        // The initial library load can finish before the delayed inset/layout callbacks settle.
-        // We correct the list padding in a pre-draw pass so the first visible frame already
-        // starts below the search bar instead of jumping down a moment later.
         View root = findViewById(android.R.id.content);
         root.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
             @Override
@@ -487,7 +476,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void customizeStatusBar() {
-        // We opt into edge-to-edge layout, then adjust icon appearance based on the current theme.
         Window window = getWindow();
         WindowCompat.setDecorFitsSystemWindows(window, false);
         WindowInsetsControllerCompat controller =
@@ -505,7 +493,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void checkPermissionsAndLoadFiles() {
-        // Permission flow is intentionally minimal: ask once, then go straight into the library.
         if (!hasMediaReadPermission()) {
             requestPermissionLauncher.launch(getReadPermission());
             return;
@@ -577,8 +564,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             )) {
                 if (cursor != null && cursor.moveToFirst()) {
                     do {
-                        // Build a detached result list off-thread. RecyclerView data itself is only
-                        // replaced on the main thread after the complete cursor has been consumed.
                         long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID));
                         String displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME));
                         long dateModified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED));
@@ -644,8 +629,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                     }
                 }
 
-                // If MediaStore changed while this cursor was being read, run one fresh pass after
-                // the current result is safely applied rather than racing two simultaneous scans.
                 if (libraryDirty) {
                     loadVideoFiles();
                 }
@@ -654,8 +637,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private String[] buildProjection() {
-        // Android 10+ gives us folder-friendly metadata directly; older devices still need the
-        // legacy DATA column as a fallback for parent-folder derivation.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return new String[]{
                     MediaStore.Video.Media._ID,
@@ -676,8 +657,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private String resolveFolderKey(Cursor cursor) {
-        // RELATIVE_PATH is the preferred folder identity because it survives scoped storage.
-        // For pre-Android-10 devices we derive the parent path from the legacy DATA column.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             int index = cursor.getColumnIndex(MediaStore.Video.Media.RELATIVE_PATH);
             if (index >= 0) {
@@ -702,8 +681,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private String resolveFolderName(Cursor cursor, String folderKey) {
-        // BUCKET_DISPLAY_NAME is the clean user-facing folder label when MediaStore exposes it.
-        // Otherwise we extract the final path segment ourselves as a fallback.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             int bucketIndex = cursor.getColumnIndex(MediaStore.Video.Media.BUCKET_DISPLAY_NAME);
             if (bucketIndex >= 0) {
@@ -731,8 +708,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void pinLastPlayed() {
-        // This is a tiny quality-of-life feature: bring the most recently watched item to the top
-        // so resume is always one tap away.
         String lastPlayedKey = PlaybackPrefs.getInstance(this).getLastPlayedKey();
         if (lastPlayedKey == null) {
             return;
@@ -750,8 +725,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     @UnstableApi
     @Override
     public void onPlayVideo(VideoFile videoFile, List<VideoFile> playlist, int position) {
-        // Pass the Uri and stable playback key separately so the player can resume reliably even
-        // when it is launched from inside the app instead of from an external intent.
+        playbackUiDirty = true;
         Intent intent = new Intent(this, VideoPlayerActivity.class);
         intent.putExtra(VideoPlayerActivity.EXTRA_VIDEO_URI, videoFile.getContentUri().toString());
         intent.putExtra(VideoPlayerActivity.EXTRA_PLAYBACK_KEY, videoFile.getPlaybackKey());
@@ -798,8 +772,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     @Override
     public void onRenameVideo(VideoFile videoFile) {
-        // We normalize the extension automatically so the user can rename the visible title
-        // without accidentally stripping the file type.
         GlassUi.showInputDialog(
                 this,
                 "Rename video",
@@ -820,8 +792,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     @Override
     public void onDeleteVideo(VideoFile videoFile) {
-        // Delete stays behind a confirmation because these are real device files, not app-local
-        // temporary entries.
         GlassUi.showConfirmDialog(
                 this,
                 "Delete video",
@@ -847,8 +817,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private void performDelete(VideoFile videoFile) {
         try {
-            // Direct delete works when the app already owns write access to the media item.
-            // If not, Android will throw SecurityException and we fall back to a system prompt.
             int rows = getContentResolver().delete(videoFile.getContentUri(), null, null);
             if (rows > 0) {
                 reloadAfterMutation();
@@ -867,8 +835,6 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private void performRename(VideoFile videoFile, String newName) {
         try {
-            // Rename is just a MediaStore metadata update on modern Android. We do not move files
-            // around manually anymore.
             ContentValues values = new ContentValues();
             values.put(MediaStore.Video.Media.DISPLAY_NAME, newName);
 
@@ -894,16 +860,12 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             String renameName,
             SecurityException securityException
     ) {
-        // Cache the original request so we can continue after Android's confirmation dialog
-        // returns control to the app.
         pendingVideoActionFile = videoFile;
         pendingRenameName = renameName;
         pendingMediaAction = action;
 
         try {
             IntentSender intentSender = null;
-            // Android 11+ has explicit MediaStore request APIs. Android 10 exposes a
-            // RecoverableSecurityException instead. We handle both paths.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 PendingIntent pendingIntent = action == PendingMediaAction.DELETE
                         ? MediaStore.createDeleteRequest(getContentResolver(),
@@ -933,14 +895,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void reloadAfterMutation() {
-        // The mutation itself already changed MediaStore. Mark the library dirty and let the same
-        // serialized background loader refresh names, folder counts, and ordering.
         libraryDirty = true;
         loadVideoFiles();
     }
 
     private void clearPendingMediaAction() {
-        // Reset the temporary mutation state once the flow completes or is cancelled.
         pendingVideoActionFile = null;
         pendingRenameName = null;
         pendingMediaAction = PendingMediaAction.NONE;
