@@ -32,3 +32,26 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build optimized release APKs
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Verify arm64 release alignment and size
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARM64_APK="$(find app/build/outputs/apk -type f -name '*arm64-v8a*release*.apk' | head -n 1)"
+          if [ -z "$ARM64_APK" ]; then
+            echo "arm64-v8a release APK not found"
+            find app/build/outputs/apk -type f -maxdepth 5 -print || true
+            exit 1
+          fi
+
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
+          if [ -z "$ZIPALIGN" ]; then
+            echo "zipalign not found"
+            exit 1
+          fi
+
+          "$ZIPALIGN" -c -P 16 -v 4 "$ARM64_APK"
+          ls -lh "$ARM64_APK"
