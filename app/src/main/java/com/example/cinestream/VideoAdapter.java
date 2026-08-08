@@ -12,9 +12,9 @@ import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
-import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
+import android.util.LruCache;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -33,12 +33,9 @@ import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHolder> {
 
@@ -53,13 +50,17 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     private static final int ACTION_DELETE = 3;
     private static final int ACTION_INFO   = 4;
 
+    // All list/search/folder adapters share the same small worker pool and bounded caches.
+    // This prevents each temporary adapter from creating its own threads and re-parsing the same
+    // files when the user switches between library modes.
+    private static final Handler MAIN_HANDLER = AppExecutors.mainHandler();
+    private static final ExecutorService EXECUTOR = AppExecutors.metadata();
+    private static final LruCache<String, MediaInfoSnapshot> MEDIA_INFO_CACHE = new LruCache<>(256);
+    private static final LruCache<String, Integer> TINT_COLOR_CACHE = new LruCache<>(512);
+
     private final Context         context;
     private final List<VideoFile> videoFiles;
     private final Listener        listener;
-    private final Handler         mainHandler     = new Handler(Looper.getMainLooper());
-    private final ExecutorService executorService = Executors.newFixedThreadPool(2);
-    private final Map<String, MediaInfoSnapshot> mediaInfoCache = new HashMap<>();
-    private final Map<String, Integer> tintColorCache = new HashMap<>();
 
     public VideoAdapter(Context context, List<VideoFile> videoFiles, Listener listener) {
         this.context    = context;
@@ -83,8 +84,16 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         Uri       videoUri  = videoFile.getContentUri();
         String    playbackKey = videoFile.getPlaybackKey();
 
-        holder.boundPlaybackKey = playbackKey;
+        // RecyclerView may reuse this holder while Glide is still decoding the previous video.
+        // Cancel the stale request first so low-end devices do not keep decoding work that can no
+        // longer become visible.
+        if (holder.thumbnailTarget != null) {
+            holder.boundPlaybackKey = null;
+            Glide.with(holder.itemView).clear(holder.thumbnailTarget);
+            holder.thumbnailTarget = null;
+        }
 
+        holder.boundPlaybackKey = playbackKey;
         holder.videoName.setText(videoFile.getName());
 
         // ── Playback progress bar ────────────────────────────────────
@@ -107,6 +116,47 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         applyCachedTint(holder, playbackKey);
 
         // ── Thumbnail + Palette tint ─────────────────────────────────
+        CustomTarget<Bitmap> target = new CustomTarget<Bitmap>() {
+            @Override
+            public void onResourceReady(@NonNull Bitmap resource,
+                                        Transition<? super Bitmap> transition) {
+                if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                    return;
+                }
+                holder.videoThumbnail.setImageBitmap(resource);
+                Integer cachedTint = TINT_COLOR_CACHE.get(playbackKey);
+                if (cachedTint != null) {
+                    applyGradientTint(holder, cachedTint);
+                    return;
+                }
+                Palette.from(resource).generate(palette -> {
+                    if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                        return;
+                    }
+                    if (palette == null) return;
+                    Palette.Swatch swatch = palette.getVibrantSwatch();
+                    if (swatch == null) swatch = palette.getMutedSwatch();
+                    if (swatch == null) swatch = palette.getDominantSwatch();
+                    if (swatch == null) return;
+                    int     rgb = swatch.getRgb();
+                    float[] hsv = new float[3];
+                    Color.colorToHSV(rgb, hsv);
+                    if (hsv[2] < 0.15f) return;
+                    TINT_COLOR_CACHE.put(playbackKey, rgb);
+                    applyGradientTint(holder, rgb);
+                });
+            }
+
+            @Override
+            public void onLoadCleared(android.graphics.drawable.Drawable placeholder) {
+                if (playbackKey.equals(holder.boundPlaybackKey)) {
+                    holder.videoThumbnail.setImageDrawable(placeholder);
+                    applyCachedTint(holder, playbackKey);
+                }
+            }
+        };
+        holder.thumbnailTarget = target;
+
         Glide.with(context)
                 .asBitmap()
                 .load(videoUri)
@@ -114,45 +164,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 .override(336, 216)
                 .centerCrop()
                 .placeholder(R.drawable.ic_video_placeholder)
-                .into(new CustomTarget<Bitmap>() {
-                    @Override
-                    public void onResourceReady(@NonNull Bitmap resource,
-                                                Transition<? super Bitmap> transition) {
-                        if (!playbackKey.equals(holder.boundPlaybackKey)) {
-                            return;
-                        }
-                        holder.videoThumbnail.setImageBitmap(resource);
-                        Integer cachedTint = tintColorCache.get(playbackKey);
-                        if (cachedTint != null) {
-                            applyGradientTint(holder, cachedTint);
-                            return;
-                        }
-                        Palette.from(resource).generate(palette -> {
-                            if (!playbackKey.equals(holder.boundPlaybackKey)) {
-                                return;
-                            }
-                            if (palette == null) return;
-                            Palette.Swatch swatch = palette.getVibrantSwatch();
-                            if (swatch == null) swatch = palette.getMutedSwatch();
-                            if (swatch == null) swatch = palette.getDominantSwatch();
-                            if (swatch == null) return;
-                            int     rgb = swatch.getRgb();
-                            float[] hsv = new float[3];
-                            Color.colorToHSV(rgb, hsv);
-                            if (hsv[2] < 0.15f) return;
-                            tintColorCache.put(playbackKey, rgb);
-                            applyGradientTint(holder, rgb);
-                        });
-                    }
-
-                    @Override
-                    public void onLoadCleared(android.graphics.drawable.Drawable placeholder) {
-                        if (playbackKey.equals(holder.boundPlaybackKey)) {
-                            holder.videoThumbnail.setImageDrawable(placeholder);
-                            applyCachedTint(holder, playbackKey);
-                        }
-                    }
-                });
+                .into(target);
 
         holder.videoSize.setText(getFileSize(videoFile.getSizeBytes()));
 
@@ -183,10 +195,10 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 } else if (item.id == ACTION_RENAME) {
                     listener.onRenameVideo(videoFile);
                 } else if (item.id == ACTION_INFO) {
-                    // Off main thread — avoids ANR on large files
-                    executorService.execute(() -> {
+                    // Off main thread — avoids ANR on large files.
+                    EXECUTOR.execute(() -> {
                         MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, true);
-                        mainHandler.post(() -> showVideoInfo(videoFile, snapshot));
+                        MAIN_HANDLER.post(() -> showVideoInfo(videoFile, snapshot));
                     });
                 } else if (item.id == ACTION_SHARE) {
                     shareVideo(videoFile);
@@ -196,17 +208,17 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         });
 
         // ── Metadata extraction — off UI thread ──────────────────────
-        MediaInfoSnapshot cachedSnapshot = mediaInfoCache.get(playbackKey);
+        MediaInfoSnapshot cachedSnapshot = MEDIA_INFO_CACHE.get(playbackKey);
         if (cachedSnapshot != null) {
             holder.videoDuration.setText(cachedSnapshot.durationLabel);
             holder.videoQuality.setText(cachedSnapshot.qualityLabel);
             return;
         }
 
-        executorService.execute(() -> {
+        EXECUTOR.execute(() -> {
             MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, false);
-            mainHandler.post(() -> {
-                mediaInfoCache.put(playbackKey, snapshot);
+            MAIN_HANDLER.post(() -> {
+                MEDIA_INFO_CACHE.put(playbackKey, snapshot);
                 if (!playbackKey.equals(holder.boundPlaybackKey)) {
                     return;
                 }
@@ -214,7 +226,17 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 holder.videoQuality.setText(snapshot.qualityLabel);
             });
         });
+    }
 
+    @Override
+    public void onViewRecycled(@NonNull VideoViewHolder holder) {
+        holder.boundPlaybackKey = null;
+        if (holder.thumbnailTarget != null) {
+            Glide.with(holder.itemView).clear(holder.thumbnailTarget);
+            holder.thumbnailTarget = null;
+        }
+        holder.videoThumbnail.setImageResource(R.drawable.ic_video_placeholder);
+        super.onViewRecycled(holder);
     }
 
     @Override
@@ -230,6 +252,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         View cardTint;
         View videoProgress;
         String boundPlaybackKey;
+        CustomTarget<Bitmap> thumbnailTarget;
 
         @SuppressLint("WrongViewCast")
         public VideoViewHolder(@NonNull View itemView) {
@@ -245,7 +268,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     }
 
     private void applyCachedTint(VideoViewHolder holder, String playbackKey) {
-        Integer cachedTint = tintColorCache.get(playbackKey);
+        Integer cachedTint = TINT_COLOR_CACHE.get(playbackKey);
         if (cachedTint == null) {
             holder.cardTint.setBackgroundColor(Color.TRANSPARENT);
             return;
@@ -365,7 +388,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                     snapshot.bitrateLabel = formatBitrate(format.getInteger(MediaFormat.KEY_BIT_RATE));
             }
 
-// Pass 2 — audio tracks, aggressive: don't skip null mime tracks
+            // Pass 2 — audio tracks, aggressive: don't skip null mime tracks
             for (int i = 0; i < extractor.getTrackCount(); i++) {
                 MediaFormat format = extractor.getTrackFormat(i);
                 String mime = format.containsKey(MediaFormat.KEY_MIME)
@@ -400,21 +423,6 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 }
             }
 
-// Build multi-track audio details label
-            if (!snapshot.allAudioTrackDetails.isEmpty()) {
-                if (snapshot.allAudioTrackDetails.size() == 1) {
-                    snapshot.audioDetailsLabel = snapshot.allAudioTrackDetails.get(0);
-                } else {
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < snapshot.allAudioTrackDetails.size(); i++) {
-                        sb.append("Track ").append(i + 1).append(": ")
-                                .append(snapshot.allAudioTrackDetails.get(i));
-                        if (i < snapshot.allAudioTrackDetails.size() - 1) sb.append("\n");
-                    }
-                    snapshot.audioDetailsLabel = sb.toString();
-                }
-            }
-
             // Build multi-track audio details label
             if (!snapshot.allAudioTrackDetails.isEmpty()) {
                 if (snapshot.allAudioTrackDetails.size() == 1) {
@@ -430,7 +438,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 }
             }
 
-            // ── Audio fallback chain ─────────────────────────────────
+            // Audio fallback chain
             if (hasAudio && "Unknown".equals(snapshot.audioCodecLabel)) {
 
                 // 1. Filename keyword hints
