@@ -63,8 +63,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          AAR="$(find media3-src/libraries/decoder_av1/build/outputs/aar -name '*.aar' | head -n 1)"
-          test -n "$AAR"
+          AAR="$(find media3-src -type f -name '*.aar' -path '*decoder_av1*' | head -n 1)"
+          if [ -z "$AAR" ]; then
+            echo 'AV1 decoder AAR was not found. Available AARs:'
+            find media3-src -type f -name '*.aar' -print || true
+            exit 1
+          fi
+
+          echo "Validating $AAR"
           TMP="$(mktemp -d)"
           unzip -q "$AAR" 'jni/*/*.so' -d "$TMP"
           python3 - "$TMP" <<'PY'
@@ -92,12 +98,14 @@ jobs:
           if bad:
               raise SystemExit('AV1 native library is not 16 KiB compatible: ' + repr(bad))
           PY
+
           ls -lh "$AAR"
+          cp "$AAR" "$GITHUB_WORKSPACE/media3-decoder-av1-1.9.4.aar"
 
       - name: Upload AV1 decoder AAR
         uses: actions/upload-artifact@v4
         with:
           name: media3-decoder-av1-1.9.4
-          path: media3-src/libraries/decoder_av1/build/outputs/aar/*.aar
+          path: media3-decoder-av1-1.9.4.aar
           if-no-files-found: error
           compression-level: 9
