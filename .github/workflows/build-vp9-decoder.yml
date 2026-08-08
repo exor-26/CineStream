@@ -55,7 +55,7 @@ jobs:
           chmod +x gradlew
           ./gradlew :lib-decoder-vp9:bundleReleaseAar --stacktrace
 
-      - name: Inspect native alignment
+      - name: Locate VP9 AAR
         shell: bash
         run: |
           set -euo pipefail
@@ -65,8 +65,16 @@ jobs:
             find media3-src -type f -name '*.aar' -print || true
             exit 1
           fi
+          echo "Found $AAR"
+          ls -lh "$AAR"
+          cp "$AAR" "$GITHUB_WORKSPACE/media3-decoder-vp9-1.9.4.aar"
 
-          echo "Validating $AAR"
+      - name: Inspect native alignment
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAR="$GITHUB_WORKSPACE/media3-decoder-vp9-1.9.4.aar"
           TMP="$(mktemp -d)"
           unzip -q "$AAR" 'jni/*/*.so' -d "$TMP"
           python3 - "$TMP" <<'PY'
@@ -95,10 +103,8 @@ jobs:
               raise SystemExit('VP9 native library is not 16 KiB compatible: ' + repr(bad))
           PY
 
-          ls -lh "$AAR"
-          cp "$AAR" "$GITHUB_WORKSPACE/media3-decoder-vp9-1.9.4.aar"
-
       - name: Upload VP9 decoder AAR
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: media3-decoder-vp9-1.9.4
