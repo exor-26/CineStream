@@ -19,10 +19,16 @@ final class AudioTrackFormatter {
     }
 
     static String buildTitle(int ordinal, Format format) {
-        String language = displayLanguage(format.language);
-        String role = roleLabel(format);
-        String label = cleanHumanLabel(format.label);
+        return buildTitle(ordinal, format.language, format.label, format.roleFlags);
+    }
 
+    static String buildTitle(int ordinal, String languageCode, String rawLabel, int roleFlags) {
+        String language = displayLanguage(languageCode);
+        String role = roleLabel(rawLabel, roleFlags);
+        String label = cleanHumanLabel(rawLabel);
+
+        // Language is stable media semantics. Prefer it over arbitrary muxer labels, which are
+        // commonly abused for source/site advertising. A meaningful role remains visible.
         if (language != null) {
             if (role != null) {
                 return language + " • " + role;
@@ -30,6 +36,7 @@ final class AudioTrackFormatter {
             return language;
         }
 
+        // Preserve a genuinely useful human label only when the media has no usable language.
         if (label != null) {
             if (role != null && !containsIgnoreCase(label, role)) {
                 return label + " • " + role;
@@ -44,17 +51,35 @@ final class AudioTrackFormatter {
     }
 
     static String buildTechnicalDetails(Format format, boolean supported) {
+        return buildTechnicalDetails(
+                format.sampleMimeType,
+                format.codecs,
+                format.channelCount,
+                format.sampleRate,
+                format.selectionFlags,
+                supported
+        );
+    }
+
+    static String buildTechnicalDetails(
+            String sampleMimeType,
+            String codecs,
+            int channelCount,
+            int sampleRate,
+            int selectionFlags,
+            boolean supported
+    ) {
         List<String> parts = new ArrayList<>();
-        parts.add(codecLabel(format));
+        parts.add(codecLabel(sampleMimeType, codecs));
 
-        if (format.channelCount > 0) {
-            parts.add(channelLabel(format.channelCount));
+        if (channelCount > 0) {
+            parts.add(channelLabel(channelCount));
         }
-        if (format.sampleRate > 0) {
-            parts.add(formatSampleRate(format.sampleRate));
+        if (sampleRate > 0) {
+            parts.add(formatSampleRate(sampleRate));
         }
 
-        if ((format.selectionFlags & C.SELECTION_FLAG_DEFAULT) != 0) {
+        if ((selectionFlags & C.SELECTION_FLAG_DEFAULT) != 0) {
             parts.add("Default");
         }
         if (!supported) {
@@ -68,7 +93,10 @@ final class AudioTrackFormatter {
     }
 
     static String codecLabel(Format format) {
-        String mime = format.sampleMimeType;
+        return codecLabel(format.sampleMimeType, format.codecs);
+    }
+
+    static String codecLabel(String mime, String codecs) {
         if (mime != null) {
             switch (mime) {
                 case "audio/mp4a-latm": return "AAC";
@@ -92,8 +120,8 @@ final class AudioTrackFormatter {
                     break;
             }
         }
-        if (format.codecs != null && !format.codecs.trim().isEmpty()) {
-            return format.codecs.trim().toUpperCase(Locale.US);
+        if (codecs != null && !codecs.trim().isEmpty()) {
+            return codecs.trim().toUpperCase(Locale.US);
         }
         return "Audio";
     }
@@ -136,14 +164,12 @@ final class AudioTrackFormatter {
         return value.toUpperCase(Locale.US);
     }
 
-    private static String roleLabel(Format format) {
-        int flags = format.roleFlags;
+    private static String roleLabel(String label, int flags) {
         if ((flags & C.ROLE_FLAG_DUB) != 0) return "Dub";
         if ((flags & C.ROLE_FLAG_COMMENTARY) != 0) return "Commentary";
         if ((flags & C.ROLE_FLAG_DESCRIBES_VIDEO) != 0) return "Audio description";
         if ((flags & C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY) != 0) return "Enhanced dialogue";
 
-        String label = format.label;
         if (label != null && label.toLowerCase(Locale.US).contains("original")) {
             return "Original";
         }
