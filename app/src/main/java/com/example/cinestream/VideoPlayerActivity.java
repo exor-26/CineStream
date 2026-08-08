@@ -326,7 +326,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void handlePlaybackError(PlaybackException error) {
-        Log.e("VideoPlayer", "Playback failed: " + error.errorCodeName, error);
+        Log.e("VideoPlayer", "Playback failed: " + error.getErrorCodeName(), error);
 
         if (!decoderRecoveryAttempted
                 && PlaybackEnginePolicy.shouldRetryWithSoftwareAudio(decoderMode, error)) {
@@ -354,7 +354,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             return;
         }
 
-        GlassUi.showToast(this, "Playback failed: " + error.errorCodeName);
+        GlassUi.showToast(this, "Playback failed: " + error.getErrorCodeName());
     }
 
     private ArrayList<MediaItem> snapshotMediaItems() {
