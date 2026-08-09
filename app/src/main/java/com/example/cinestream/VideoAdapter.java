@@ -398,6 +398,9 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         int primaryAudioChannels   = 0;
         int primaryAudioSampleRate = 0;
         List<String> allAudioTrackDetails = new ArrayList<>();
+        List<String> platformAudioCodecs = new ArrayList<>();
+        List<Integer> platformAudioChannels = new ArrayList<>();
+        List<Integer> platformAudioSampleRates = new ArrayList<>();
     }
 
     // ── Core extraction ──────────────────────────────────────────────
@@ -504,6 +507,9 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 if (hz > 0) parts.add(hz + " Hz");
                 String trackDetail = parts.isEmpty() ? "Audio track" : TextUtils.join(" • ", parts);
                 snapshot.allAudioTrackDetails.add(trackDetail);
+                snapshot.platformAudioCodecs.add(codecLabel);
+                snapshot.platformAudioChannels.add(ch);
+                snapshot.platformAudioSampleRates.add(hz);
 
                 if ("Unknown".equals(snapshot.audioCodecLabel)) {
                     snapshot.audioCodecLabel        = codecLabel;
@@ -590,37 +596,24 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             try { retriever.release(); } catch (Exception ignored) {}
             try { extractor.release(); } catch (Exception ignored) {}
         }
-        // Detailed Info uses Media3's own extractor stack first. This is the same parser family
-        // used by playback and exposes per-track language, codec, channel count and sample rate
-        // more consistently than the platform MediaExtractor for formats such as E-AC-3.
+        // Enumerate every audio track with Media3, then fill only missing technical
+        // fields from the platform extractor when both parsers report the same track count.
         if (allowFfmpegFallback) {
             Media3AudioMetadataProbe.Result media3 =
                     Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
             if (media3.hasAudioTracks()) {
-                boolean existingDetailsWeak = snapshot.allAudioTrackDetails.isEmpty()
-                        || "Unknown".equals(snapshot.audioDetailsLabel)
-                        || "Audio track present".equals(snapshot.audioDetailsLabel);
-                boolean inspectorFillsMissingTechnicalData =
-                        (snapshot.primaryAudioChannels <= 0 && media3.primaryChannelCount > 0)
-                                || (snapshot.primaryAudioSampleRate <= 0
-                                && media3.primarySampleRate > 0);
-
-                // Use inspector descriptions only when they improve incomplete platform metadata.
-                if (existingDetailsWeak || inspectorFillsMissingTechnicalData) {
-                    snapshot.allAudioTrackDetails.clear();
-                    snapshot.allAudioTrackDetails.addAll(media3.trackDetails);
-                    snapshot.audioDetailsLabel = media3.multiLineDetails();
-                }
-                if (media3.primaryCodecLabel != null
-                        && !media3.primaryCodecLabel.isEmpty()
-                        && !"Audio".equals(media3.primaryCodecLabel)) {
-                    snapshot.audioCodecLabel = media3.primaryCodecLabel;
-                }
-                if (media3.primaryChannelCount > 0) {
-                    snapshot.primaryAudioChannels = media3.primaryChannelCount;
-                }
-                if (media3.primarySampleRate > 0) {
-                    snapshot.primaryAudioSampleRate = media3.primarySampleRate;
+                media3.enrichMissingFromPlatform(
+                        snapshot.platformAudioCodecs,
+                        snapshot.platformAudioChannels,
+                        snapshot.platformAudioSampleRates);
+                snapshot.allAudioTrackDetails.clear();
+                snapshot.allAudioTrackDetails.addAll(media3.detailLines());
+                snapshot.audioCodecLabel = media3.multiLineCodecs();
+                snapshot.audioDetailsLabel = media3.multiLineDetails();
+                DetailedAudioFormatter.Track primary = media3.primaryTrack();
+                if (primary != null) {
+                    if (primary.channelCount > 0) snapshot.primaryAudioChannels = primary.channelCount;
+                    if (primary.sampleRate > 0) snapshot.primaryAudioSampleRate = primary.sampleRate;
                 }
             }
         }
@@ -677,7 +670,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         rows.add(new GlassUi.InfoItem("Name",            videoFile.getName()));
         rows.add(new GlassUi.InfoItem("Container",       snapshot.containerLabel));
         rows.add(new GlassUi.InfoItem("Video codec",     snapshot.videoCodecLabel));
-        rows.add(new GlassUi.InfoItem("Audio codec",     snapshot.audioCodecLabel));
+        rows.add(new GlassUi.InfoItem("Audio codecs",    snapshot.audioCodecLabel));
         rows.add(new GlassUi.InfoItem("Resolution",      snapshot.resolutionLabel));
         rows.add(new GlassUi.InfoItem("Display quality", snapshot.qualityLabel));
         rows.add(new GlassUi.InfoItem("Duration",        snapshot.durationLabel));

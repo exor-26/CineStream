@@ -13,9 +13,7 @@ import androidx.media3.exoplayer.source.TrackGroupArray;
 import androidx.media3.inspector.MetadataRetriever;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /** Detailed-info probe backed by Media3's own extractor stack. */
@@ -23,36 +21,43 @@ import java.util.concurrent.TimeUnit;
 final class Media3AudioMetadataProbe {
 
     static final class Result {
-        String primaryCodecLabel;
-        int primaryChannelCount;
-        int primarySampleRate;
-        final List<String> trackDetails = new ArrayList<>();
+        final List<DetailedAudioFormatter.Track> tracks = new ArrayList<>();
 
         boolean hasAudioTracks() {
-            return !trackDetails.isEmpty();
+            return !tracks.isEmpty();
+        }
+
+        void enrichMissingFromPlatform(
+                List<String> codecs,
+                List<Integer> channels,
+                List<Integer> sampleRates
+        ) {
+            DetailedAudioFormatter.enrichMissing(tracks, codecs, channels, sampleRates);
+        }
+
+        List<String> detailLines() {
+            return DetailedAudioFormatter.detailLines(tracks);
+        }
+
+        String multiLineCodecs() {
+            return DetailedAudioFormatter.multiLineCodecs(tracks);
         }
 
         String multiLineDetails() {
-            if (trackDetails.isEmpty()) {
-                return "Unknown";
+            return DetailedAudioFormatter.multiLineDetails(tracks);
+        }
+
+        DetailedAudioFormatter.Track primaryTrack() {
+            DetailedAudioFormatter.Track first = null;
+            for (DetailedAudioFormatter.Track track : tracks) {
+                if (first == null) first = track;
+                if ((track.selectionFlags & C.SELECTION_FLAG_DEFAULT) != 0) return track;
             }
-            if (trackDetails.size() == 1) {
-                return trackDetails.get(0);
-            }
-            StringBuilder builder = new StringBuilder();
-            for (int i = 0; i < trackDetails.size(); i++) {
-                builder.append("Track ").append(i + 1).append(": ")
-                        .append(trackDetails.get(i));
-                if (i < trackDetails.size() - 1) {
-                    builder.append('\n');
-                }
-            }
-            return builder.toString();
+            return first;
         }
     }
 
-    private Media3AudioMetadataProbe() {
-    }
+    private Media3AudioMetadataProbe() {}
 
     static Result probe(Context context, Uri uri) {
         Result result = new Result();
@@ -60,35 +65,21 @@ final class Media3AudioMetadataProbe {
 
         try (MetadataRetriever retriever = new MetadataRetriever.Builder(context, item).build()) {
             TrackGroupArray groups = retriever.retrieveTrackGroups().get(8, TimeUnit.SECONDS);
-            Set<String> uniqueDetails = new LinkedHashSet<>();
-            Format firstAudio = null;
-            Format preferredAudio = null;
             int ordinal = 1;
-
             for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
                 TrackGroup group = groups.get(groupIndex);
-                if (group.type != C.TRACK_TYPE_AUDIO) {
-                    continue;
-                }
+                if (group.type != C.TRACK_TYPE_AUDIO) continue;
                 for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
                     Format format = group.getFormat(trackIndex);
-                    if (firstAudio == null) {
-                        firstAudio = format;
-                    }
-                    if (preferredAudio == null
-                            && (format.selectionFlags & C.SELECTION_FLAG_DEFAULT) != 0) {
-                        preferredAudio = format;
-                    }
-                    uniqueDetails.add(AudioTrackFormatter.buildInfoLine(ordinal++, format));
+                    result.tracks.add(new DetailedAudioFormatter.Track(
+                            ordinal,
+                            AudioTrackFormatter.buildTitle(ordinal, format),
+                            AudioTrackFormatter.codecLabel(format),
+                            Math.max(0, format.channelCount),
+                            Math.max(0, format.sampleRate),
+                            format.selectionFlags));
+                    ordinal++;
                 }
-            }
-
-            result.trackDetails.addAll(uniqueDetails);
-            Format primary = preferredAudio != null ? preferredAudio : firstAudio;
-            if (primary != null) {
-                result.primaryCodecLabel = AudioTrackFormatter.codecLabel(primary);
-                result.primaryChannelCount = Math.max(0, primary.channelCount);
-                result.primarySampleRate = Math.max(0, primary.sampleRate);
             }
         } catch (Exception e) {
             Log.w("Media3MetadataProbe", "Media3 audio metadata probe failed", e);
