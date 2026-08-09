@@ -664,12 +664,14 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 subtitleEnabled ? "Disable captions" : "Currently off"
         ));
 
+        int ordinal = 1;
         for (int i = 0; i < subtitleGroups.size(); i++) {
             TrackGroup trackGroup = subtitleGroups.get(i).getMediaTrackGroup();
             for (int j = 0; j < trackGroup.length; j++) {
                 Format format = trackGroup.getFormat(j);
-                String title = buildTrackTitle("Caption", j, format.language, format.label);
-                String subtitle = buildSubtitleTrackSubtitle(format, subtitleGroups.get(i).isTrackSupported(j));
+                String title = SubtitleTrackFormatter.buildTitle(ordinal++, format);
+                String subtitle = SubtitleTrackFormatter.buildTechnicalDetails(
+                        format, subtitleGroups.get(i).isTrackSupported(j));
                 if (subtitleGroups.get(i).isTrackSelected(j) && subtitleEnabled) {
                     subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
                 }
