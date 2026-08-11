@@ -33,12 +33,15 @@ public class PlaybackEnginePolicyTest {
     }
 
     @Test
-    public void bundledSoftwareVideoSupportIsNotOverclaimed() {
+    public void bundledSoftwareVideoSupportMatchesNativeFallbackSet() {
         assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/av01"));
         assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/x-vnd.on2.vp9"));
-        assertFalse(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/avc"));
-        assertFalse(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/hevc"));
-        assertFalse(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/mp4v-es"));
+        assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/avc"));
+        assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/hevc"));
+        assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/mp4v-es"));
+        assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/mpeg2"));
+        assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/wvc1"));
+        assertFalse(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/x-unknown"));
     }
 
     @Test
