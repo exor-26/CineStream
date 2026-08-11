@@ -13,26 +13,48 @@ case "$(uname -s)" in
   *) echo "Unsupported build host: $(uname -s)" >&2; exit 1 ;;
 esac
 
-NDK_ROOT="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
-if [[ -z "${NDK_ROOT}" ]]; then
-  SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-  if [[ -z "${SDK_ROOT}" && "${HOST_TAG}" == "windows-x86_64" && -n "${LOCALAPPDATA:-}" ]]; then
-    if command -v cygpath >/dev/null 2>&1; then
-      SDK_ROOT="$(cygpath -u "${LOCALAPPDATA}/Android/Sdk")"
-    else
-      SDK_ROOT="${LOCALAPPDATA}/Android/Sdk"
+SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+if [[ -z "${SDK_ROOT}" && "${HOST_TAG}" == "windows-x86_64" && -n "${LOCALAPPDATA:-}" ]]; then
+  if command -v cygpath >/dev/null 2>&1; then
+    SDK_ROOT="$(cygpath -u "${LOCALAPPDATA}/Android/Sdk")"
+  else
+    SDK_ROOT="${LOCALAPPDATA}/Android/Sdk"
+  fi
+fi
+
+# Prefer the exact project-pinned side-by-side NDK. ANDROID_NDK_HOME is often set by
+# CI images to a different preinstalled version, which made builds non-reproducible.
+NDK_ROOT="${CINESTREAM_NDK_ROOT:-}"
+if [[ -z "${NDK_ROOT}" && -n "${SDK_ROOT}" ]]; then
+  NDK_ROOT="${SDK_ROOT}/ndk/${PINNED_NDK_VERSION}"
+fi
+
+# Fall back to the conventional NDK environment variables only when they really
+# point to the pinned revision. Use CINESTREAM_NDK_ROOT for an intentional override.
+if [[ -z "${NDK_ROOT}" || ! -d "${NDK_ROOT}" ]]; then
+  for candidate in "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_ROOT:-}"; do
+    [[ -n "${candidate}" && -d "${candidate}" ]] || continue
+    revision="$(sed -n 's/^Pkg.Revision[[:space:]]*=[[:space:]]*//p' "${candidate}/source.properties" 2>/dev/null | head -n 1)"
+    if [[ "${revision}" == "${PINNED_NDK_VERSION}" ]]; then
+      NDK_ROOT="${candidate}"
+      break
     fi
-  fi
-  if [[ -n "${SDK_ROOT}" ]]; then
-    NDK_ROOT="${SDK_ROOT}/ndk/${PINNED_NDK_VERSION}"
-  fi
+  done
 fi
 
 if [[ -z "${NDK_ROOT}" || ! -d "${NDK_ROOT}" ]]; then
   echo "Android NDK ${PINNED_NDK_VERSION} was not found." >&2
-  echo "Install it with sdkmanager \"ndk;${PINNED_NDK_VERSION}\" or set ANDROID_NDK_HOME." >&2
+  echo "Install it with sdkmanager \"ndk;${PINNED_NDK_VERSION}\" or set CINESTREAM_NDK_ROOT explicitly." >&2
   exit 1
 fi
+
+NDK_REVISION="$(sed -n 's/^Pkg.Revision[[:space:]]*=[[:space:]]*//p' "${NDK_ROOT}/source.properties" 2>/dev/null | head -n 1)"
+if [[ -z "${CINESTREAM_NDK_ROOT:-}" && "${NDK_REVISION}" != "${PINNED_NDK_VERSION}" ]]; then
+  echo "Resolved NDK revision '${NDK_REVISION:-unknown}' does not match pinned ${PINNED_NDK_VERSION}." >&2
+  exit 1
+fi
+
+echo "Using Android NDK ${NDK_REVISION:-unknown} at ${NDK_ROOT}"
 
 TOOLCHAIN="${NDK_ROOT}/toolchains/llvm/prebuilt/${HOST_TAG}"
 if [[ ! -d "${TOOLCHAIN}" ]]; then
