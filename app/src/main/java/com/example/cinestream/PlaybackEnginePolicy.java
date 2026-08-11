@@ -8,8 +8,6 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlaybackException;
 import androidx.media3.exoplayer.Renderer;
-import androidx.media3.exoplayer.audio.AudioRendererEventListener;
-import androidx.media3.exoplayer.audio.AudioSink;
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
 import androidx.media3.exoplayer.video.VideoRendererEventListener;
 
@@ -51,6 +49,13 @@ public final class PlaybackEnginePolicy {
                 return this;
             }
             return preferSoftwareAudio ? SOFTWARE_AUDIO_VIDEO_FIRST : SOFTWARE_VIDEO_FIRST;
+        }
+
+        DecoderMode withoutSoftwareVideo() {
+            if (!preferSoftwareVideo) {
+                return this;
+            }
+            return preferSoftwareAudio ? SOFTWARE_AUDIO_FIRST : HARDWARE_FIRST;
         }
     }
 
