@@ -126,7 +126,6 @@ build_abi() {
     --disable-avdevice \
     --disable-avformat \
     --disable-avfilter \
-    --disable-postproc \
     --disable-swresample \
     --disable-everything \
     --enable-avcodec \
