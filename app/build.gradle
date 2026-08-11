@@ -4,9 +4,14 @@ plugins {
     id 'com.android.application'
 }
 
+def cineFfmpegVersion = "8.1.2"
+def cineFfmpegRoot = file("${rootProject.projectDir}/.native/ffmpeg-${cineFfmpegVersion}")
+def cineFfmpegBuildScript = file("${rootProject.projectDir}/scripts/build_ffmpeg_android.sh")
+
 android {
     namespace 'com.example.cinestream'
     compileSdk 35
+    ndkVersion "26.1.10909125"
 
     defaultConfig {
         applicationId "com.example.cinestream"
@@ -17,6 +22,13 @@ android {
         versionName "9.2"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DFFMPEG_ROOT=${cineFfmpegRoot.absolutePath}"
+                cppFlags "-std=c++17"
+            }
+        }
     }
 
     buildTypes {
@@ -34,12 +46,49 @@ android {
             universalApk false
         }
     }
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+    sourceSets {
+        main {
+            // FFmpeg is built outside app/build so `gradlew clean` does not rebuild it every time.
+            jniLibs.srcDirs += [cineFfmpegRoot]
+        }
+    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
     tasks.withType(JavaCompile).configureEach {
         options.compilerArgs += ['-Xlint:deprecation']
+    }
+}
+
+tasks.register('buildCineFfmpeg', Exec) {
+    group = 'build'
+    description = 'Builds CineStream minimal FFmpeg video decoder libraries for Android.'
+
+    inputs.file(cineFfmpegBuildScript)
+    outputs.files(
+            file("${cineFfmpegRoot}/arm64-v8a/libavcodec.so"),
+            file("${cineFfmpegRoot}/arm64-v8a/libavutil.so"),
+            file("${cineFfmpegRoot}/armeabi-v7a/libavcodec.so"),
+            file("${cineFfmpegRoot}/armeabi-v7a/libavutil.so"),
+            file("${cineFfmpegRoot}/include/libavcodec/avcodec.h")
+    )
+
+    commandLine 'bash', cineFfmpegBuildScript.absolutePath, cineFfmpegRoot.absolutePath
+}
+
+// Native configure/compile tasks require the generated FFmpeg headers and shared libraries.
+tasks.configureEach { task ->
+    if (task.name == 'preBuild'
+            || task.name.startsWith('configureCMake')
+            || task.name.startsWith('buildCMake')) {
+        task.dependsOn tasks.named('buildCineFfmpeg')
     }
 }
 
@@ -62,7 +111,7 @@ dependencies {
     implementation "androidx.media3:media3-common:$media3_version"
     implementation "androidx.media3:media3-ui:$media3_version"
     implementation "androidx.media3:media3-inspector:$media3_version"
-    // Compatibility-copy fallback: offline transcode to a device-decodable H.264 rendition.
+    // Compatibility-copy fallback remains only for formats outside CineStream's native video set.
     implementation "androidx.media3:media3-transformer:$media3_version"
     implementation "androidx.media3:media3-effect:$media3_version"
     implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1"
