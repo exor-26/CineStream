@@ -11,6 +11,9 @@ import androidx.media3.exoplayer.Renderer;
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
 import androidx.media3.exoplayer.video.VideoRendererEventListener;
 
+import com.example.cinestream.ffmpeg.CineFfmpegLibrary;
+import com.example.cinestream.ffmpeg.CineFfmpegVideoRenderer;
+
 import java.util.ArrayList;
 
 /**
@@ -19,7 +22,7 @@ import java.util.ArrayList;
  * Platform video decoders remain first for normal playback because they are normally hardware
  * accelerated and far more power-efficient than software video extensions. Audio also starts
  * platform-first. Decoder preferences are switched independently after a genuine renderer failure:
- * FFmpeg may be preferred for audio while dav1d/libvpx may be preferred for AV1/VP9 video.
+ * FFmpeg may be preferred for audio while dav1d/libvpx/CineFFmpeg may be preferred for video.
  */
 public final class PlaybackEnginePolicy {
 
@@ -79,11 +82,7 @@ public final class PlaybackEnginePolicy {
                 && isAudioRendererFailure(error);
     }
 
-    /**
-     * Returns whether the failed video can be retried using a bundled software video renderer.
-     * Media3 1.9.4 has functional bundled video extensions for VP9 and AV1. Its FFmpeg video
-     * renderer is explicitly unfinished, so H.264/HEVC/etc. are intentionally not claimed here.
-     */
+    /** Returns whether the failed video can be retried using a bundled software video renderer. */
     public static boolean shouldRetryWithSoftwareVideo(
             DecoderMode currentMode,
             PlaybackException error
@@ -113,7 +112,9 @@ public final class PlaybackEnginePolicy {
     }
 
     static boolean hasBundledSoftwareVideoDecoder(String mime) {
-        return "video/av01".equals(mime) || "video/x-vnd.on2.vp9".equals(mime);
+        return "video/av01".equals(mime)
+                || "video/x-vnd.on2.vp9".equals(mime)
+                || CineFfmpegLibrary.isDeclaredVideoMimeType(mime);
     }
 
     static boolean isVideoDecoderFailure(PlaybackException error) {
@@ -157,10 +158,12 @@ public final class PlaybackEnginePolicy {
 
     /**
      * Media3 exposes one extension ordering flag for both audio and video. CineStream deliberately
-     * controls the two tracks independently: normal video remains MediaCodec-first, while a video
-     * recovery can move dav1d/libvpx before MediaCodec without also forcing FFmpeg audio first.
+     * controls the tracks independently. The CineFFmpeg video renderer is appended in normal mode
+     * so MediaCodec remains first, and inserted first only during a software-video recovery.
      */
     private static final class CineStreamRenderersFactory extends DefaultRenderersFactory {
+        private static final int SOFTWARE_VIDEO_DROPPED_FRAMES_NOTIFY_THRESHOLD = 50;
+
         private final DecoderMode decoderMode;
 
         CineStreamRenderersFactory(Context context, DecoderMode decoderMode) {
@@ -197,6 +200,18 @@ public final class PlaybackEnginePolicy {
                     allowedVideoJoiningTimeMs,
                     out
             );
+
+            CineFfmpegVideoRenderer ffmpegRenderer = new CineFfmpegVideoRenderer(
+                    allowedVideoJoiningTimeMs,
+                    eventHandler,
+                    eventListener,
+                    SOFTWARE_VIDEO_DROPPED_FRAMES_NOTIFY_THRESHOLD
+            );
+            if (decoderMode.preferSoftwareVideo) {
+                out.add(0, ffmpegRenderer);
+            } else {
+                out.add(ffmpegRenderer);
+            }
         }
     }
 }
