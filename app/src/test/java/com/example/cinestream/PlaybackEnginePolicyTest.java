@@ -51,5 +51,14 @@ public class PlaybackEnginePolicyTest {
         assertEquals(PlaybackEnginePolicy.DecoderMode.SOFTWARE_AUDIO_VIDEO_FIRST, both);
         assertEquals(both, both.withSoftwareAudio());
         assertEquals(both, both.withSoftwareVideo());
+
+        assertEquals(
+                PlaybackEnginePolicy.DecoderMode.SOFTWARE_AUDIO_FIRST,
+                both.withoutSoftwareVideo()
+        );
+        assertEquals(
+                PlaybackEnginePolicy.DecoderMode.HARDWARE_FIRST,
+                video.withoutSoftwareVideo()
+        );
     }
 }
