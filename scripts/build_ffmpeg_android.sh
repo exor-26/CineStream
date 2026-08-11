@@ -84,14 +84,14 @@ build_abi() {
   local compiler_prefix="$4"
 
   local final_dir="${OUTPUT_ROOT}/${abi}"
-  local marker="${final_dir}/.ffmpeg-${FFMPEG_VERSION}"
-  if [[ -f "${marker}" && -f "${final_dir}/libavcodec.so" && -f "${final_dir}/libavutil.so" ]]; then
-    echo "FFmpeg ${FFMPEG_VERSION} already built for ${abi}."
+  local marker="${final_dir}/.ffmpeg-${FFMPEG_VERSION}-static"
+  if [[ -f "${marker}" && -f "${final_dir}/libavcodec.a" && -f "${final_dir}/libavutil.a" ]]; then
+    echo "FFmpeg ${FFMPEG_VERSION} static libraries already built for ${abi}."
     return
   fi
 
-  local build_dir="${WORK_ROOT}/build-${abi}"
-  local install_dir="${WORK_ROOT}/install-${abi}"
+  local build_dir="${WORK_ROOT}/build-${abi}-static"
+  local install_dir="${WORK_ROOT}/install-${abi}-static"
   rm -rf "${build_dir}" "${install_dir}" "${final_dir}"
   mkdir -p "${build_dir}" "${install_dir}" "${final_dir}"
 
@@ -115,8 +115,8 @@ build_abi() {
     --ar="${TOOLCHAIN}/bin/llvm-ar" \
     --ranlib="${TOOLCHAIN}/bin/llvm-ranlib" \
     --strip="${TOOLCHAIN}/bin/llvm-strip" \
-    --enable-shared \
-    --disable-static \
+    --disable-shared \
+    --enable-static \
     --enable-pic \
     --disable-symver \
     --disable-programs \
@@ -131,18 +131,14 @@ build_abi() {
     --enable-avcodec \
     --enable-avutil \
     --extra-cflags="-O3 -fPIC -ffunction-sections -fdata-sections" \
-    --extra-ldflags="-Wl,--gc-sections -Wl,-z,max-page-size=16384" \
     "${COMMON_DECODER_FLAGS[@]}"
 
   make -j"${JOBS}"
   make install
   popd >/dev/null
 
-  cp -L "${install_dir}/lib/libavcodec.so" "${final_dir}/libavcodec.so"
-  cp -L "${install_dir}/lib/libavutil.so" "${final_dir}/libavutil.so"
-
-  "${TOOLCHAIN}/bin/llvm-strip" --strip-unneeded "${final_dir}/libavcodec.so" || true
-  "${TOOLCHAIN}/bin/llvm-strip" --strip-unneeded "${final_dir}/libavutil.so" || true
+  cp "${install_dir}/lib/libavcodec.a" "${final_dir}/libavcodec.a"
+  cp "${install_dir}/lib/libavutil.a" "${final_dir}/libavutil.a"
 
   if [[ ! -d "${OUTPUT_ROOT}/include" ]]; then
     cp -R "${install_dir}/include" "${OUTPUT_ROOT}/include"
@@ -154,4 +150,4 @@ build_abi() {
 build_abi "arm64-v8a" "aarch64" "armv8-a" "aarch64-linux-android"
 build_abi "armeabi-v7a" "arm" "armv7-a" "armv7a-linux-androideabi"
 
-echo "Minimal FFmpeg video decoder build ready at ${OUTPUT_ROOT}."
+echo "Minimal FFmpeg video decoder static libraries ready at ${OUTPUT_ROOT}."
