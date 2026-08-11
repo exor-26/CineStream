@@ -31,6 +31,7 @@ target_compile_options(cinestream_ffmpeg PRIVATE
 
 target_link_options(cinestream_ffmpeg PRIVATE
     -Wl,--gc-sections
+    -Wl,--exclude-libs,ALL
     -Wl,-z,max-page-size=16384
 )
 
