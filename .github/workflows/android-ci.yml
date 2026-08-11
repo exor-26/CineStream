@@ -120,6 +120,26 @@ jobs:
                   + ', '.join(forbidden)
               )
 
+          dynamic_symbols = subprocess.check_output(
+              ['nm', '-D', '--defined-only', str(cine)],
+              text=True,
+              errors='replace',
+          )
+          leaked_ffmpeg_symbols = []
+          for line in dynamic_symbols.splitlines():
+              fields = line.split()
+              if not fields:
+                  continue
+              symbol = fields[-1]
+              if symbol.startswith(('avcodec_', 'av_', 'avpriv_', 'ff_')):
+                  leaked_ffmpeg_symbols.append(symbol)
+          if leaked_ffmpeg_symbols:
+              raise SystemExit(
+                  'Statically linked FFmpeg symbols leaked from libcinestream_ffmpeg.so: '
+                  + ', '.join(sorted(leaked_ffmpeg_symbols)[:20])
+              )
+          print('FFmpeg archive symbols are private to libcinestream_ffmpeg.so')
+
           bad = []
           for library in libraries:
               output = subprocess.check_output(
