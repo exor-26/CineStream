@@ -11,10 +11,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(FFMPEG_ABI_ROOT "${FFMPEG_ROOT}/${ANDROID_ABI}")
 set(FFMPEG_INCLUDE_ROOT "${FFMPEG_ROOT}/include")
 
-foreach(FFMPEG_LIB avutil avcodec)
-    add_library(${FFMPEG_LIB} SHARED IMPORTED)
+foreach(FFMPEG_LIB avcodec avutil)
+    add_library(${FFMPEG_LIB} STATIC IMPORTED)
     set_target_properties(${FFMPEG_LIB} PROPERTIES
-        IMPORTED_LOCATION "${FFMPEG_ABI_ROOT}/lib${FFMPEG_LIB}.so"
+        IMPORTED_LOCATION "${FFMPEG_ABI_ROOT}/lib${FFMPEG_LIB}.a"
     )
 endforeach()
 
@@ -38,10 +38,14 @@ find_library(log-lib log)
 find_library(android-lib android)
 find_library(egl-lib EGL)
 find_library(gles3-lib GLESv3)
+find_library(m-lib m)
+find_library(dl-lib dl)
 
 target_link_libraries(cinestream_ffmpeg
     avcodec
     avutil
+    ${m-lib}
+    ${dl-lib}
     ${log-lib}
     ${android-lib}
     ${egl-lib}
