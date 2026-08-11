@@ -9,10 +9,13 @@ import android.util.Log;
 import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
+import androidx.media3.common.util.Clock;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.effect.FrameDropEffect;
 import androidx.media3.effect.Presentation;
 import androidx.media3.transformer.Composition;
+import androidx.media3.transformer.DefaultAssetLoaderFactory;
+import androidx.media3.transformer.DefaultDecoderFactory;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportException;
@@ -136,8 +139,23 @@ final class CompatibilityVideoTranscoder {
                 .setEffects(new Effects(Collections.emptyList(), videoEffects))
                 .build();
 
+        // Transformer normally tries only its preferred MediaCodec decoder. For compatibility
+        // export we deliberately allow lower-priority decoder fallback: a device may reject 4K in
+        // its hardware decoder while a platform software decoder can still decode it offline.
+        DefaultDecoderFactory decoderFactory = new DefaultDecoderFactory.Builder(context)
+                .setEnableDecoderFallback(true)
+                .setShouldConfigureOperatingRate(true)
+                .build();
+        DefaultAssetLoaderFactory assetLoaderFactory = new DefaultAssetLoaderFactory(
+                context,
+                decoderFactory,
+                Clock.DEFAULT,
+                null
+        );
+
         final Session[] holder = new Session[1];
         Transformer transformer = new Transformer.Builder(context)
+                .setAssetLoaderFactory(assetLoaderFactory)
                 .setVideoMimeType(MimeTypes.VIDEO_H264)
                 .addListener(new Transformer.Listener() {
                     @Override
