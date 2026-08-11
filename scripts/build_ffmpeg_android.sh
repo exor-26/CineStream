@@ -3,13 +3,8 @@ set -euo pipefail
 
 FFMPEG_VERSION="8.1.2"
 ANDROID_API="24"
+PINNED_NDK_VERSION="26.1.10909125"
 OUTPUT_ROOT="${1:?Usage: build_ffmpeg_android.sh <output-root>}"
-NDK_ROOT="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
-
-if [[ -z "${NDK_ROOT}" || ! -d "${NDK_ROOT}" ]]; then
-  echo "ANDROID_NDK_HOME must point to an installed Android NDK." >&2
-  exit 1
-fi
 
 case "$(uname -s)" in
   Linux*) HOST_TAG="linux-x86_64" ;;
@@ -17,6 +12,27 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) HOST_TAG="windows-x86_64" ;;
   *) echo "Unsupported build host: $(uname -s)" >&2; exit 1 ;;
 esac
+
+NDK_ROOT="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+if [[ -z "${NDK_ROOT}" ]]; then
+  SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+  if [[ -z "${SDK_ROOT}" && "${HOST_TAG}" == "windows-x86_64" && -n "${LOCALAPPDATA:-}" ]]; then
+    if command -v cygpath >/dev/null 2>&1; then
+      SDK_ROOT="$(cygpath -u "${LOCALAPPDATA}/Android/Sdk")"
+    else
+      SDK_ROOT="${LOCALAPPDATA}/Android/Sdk"
+    fi
+  fi
+  if [[ -n "${SDK_ROOT}" ]]; then
+    NDK_ROOT="${SDK_ROOT}/ndk/${PINNED_NDK_VERSION}"
+  fi
+fi
+
+if [[ -z "${NDK_ROOT}" || ! -d "${NDK_ROOT}" ]]; then
+  echo "Android NDK ${PINNED_NDK_VERSION} was not found." >&2
+  echo "Install it with sdkmanager \"ndk;${PINNED_NDK_VERSION}\" or set ANDROID_NDK_HOME." >&2
+  exit 1
+fi
 
 TOOLCHAIN="${NDK_ROOT}/toolchains/llvm/prebuilt/${HOST_TAG}"
 if [[ ! -d "${TOOLCHAIN}" ]]; then
