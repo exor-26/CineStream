@@ -6,6 +6,8 @@ import android.os.Build;
 
 import androidx.media3.common.Format;
 
+import java.util.List;
+
 /**
  * Conservative capability probe for the currently selected video format.
  *
@@ -61,6 +63,7 @@ public final class DeviceVideoCapabilities {
         boolean foundDecoder = false;
         String bestDecoder = null;
         boolean bestHardware = false;
+        Assessment supportedSoftware = null;
 
         for (MediaCodecInfo codecInfo : codecInfos) {
             if (codecInfo.isEncoder()) {
@@ -101,10 +104,26 @@ public final class DeviceVideoCapabilities {
             }
 
             if (supported) {
-                return new Assessment(Support.SUPPORTED, codecInfo.getName(), hardware);
+                Assessment assessment = new Assessment(
+                        Support.SUPPORTED,
+                        codecInfo.getName(),
+                        hardware
+                );
+                // Prefer a reported hardware-capable decoder when both hardware and platform
+                // software decoders advertise support. This gives compatibility targeting the
+                // lowest-power viable path.
+                if (hardware) {
+                    return assessment;
+                }
+                if (supportedSoftware == null) {
+                    supportedSoftware = assessment;
+                }
             }
         }
 
+        if (supportedSoftware != null) {
+            return supportedSoftware;
+        }
         if (!foundDecoder) {
             return new Assessment(Support.NO_PLATFORM_DECODER, null, false);
         }
@@ -113,6 +132,44 @@ public final class DeviceVideoCapabilities {
                 bestDecoder,
                 bestHardware
         );
+    }
+
+    /**
+     * Finds the highest-quality H.264 size/frame-rate target that the device reports it can decode.
+     * Hardware-supported targets are preferred. A platform software H.264 decoder is accepted only
+     * when no hardware target is available.
+     */
+    static CompatibilityVideoPolicy.Target chooseH264CompatibilityTarget(
+            int sourceWidth,
+            int sourceHeight,
+            float sourceFrameRate
+    ) {
+        List<CompatibilityVideoPolicy.Target> candidates =
+                CompatibilityVideoPolicy.buildCandidates(
+                        sourceWidth,
+                        sourceHeight,
+                        sourceFrameRate
+                );
+        CompatibilityVideoPolicy.Target softwareTarget = null;
+        for (CompatibilityVideoPolicy.Target target : candidates) {
+            Format targetFormat = new Format.Builder()
+                    .setSampleMimeType("video/avc")
+                    .setWidth(target.width)
+                    .setHeight(target.height)
+                    .setFrameRate(target.frameRate)
+                    .build();
+            Assessment assessment = assess(targetFormat);
+            if (assessment.support != Support.SUPPORTED) {
+                continue;
+            }
+            if (assessment.hardwareAccelerated) {
+                return target;
+            }
+            if (softwareTarget == null) {
+                softwareTarget = target;
+            }
+        }
+        return softwareTarget;
     }
 
     private static boolean isHardwareAccelerated(MediaCodecInfo codecInfo) {
