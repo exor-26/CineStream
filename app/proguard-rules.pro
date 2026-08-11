@@ -33,3 +33,6 @@
 -keep class androidx.media3.decoder.av1.Libdav1dVideoRenderer { *; }
 -keep class androidx.media3.decoder.vp9.LibvpxVideoRenderer { *; }
 
+# CineStream's FFmpeg video bridge uses JNI method names and VideoDecoderOutputBuffer fields.
+-keep class com.example.cinestream.ffmpeg.** { *; }
+-keep class androidx.media3.decoder.VideoDecoderOutputBuffer { *; }
