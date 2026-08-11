@@ -32,6 +32,12 @@ public final class CineFfmpegLibrary {
         return available;
     }
 
+    /** Returns whether CineStream's minimal native build is intended to provide this video MIME. */
+    public static boolean isDeclaredVideoMimeType(@Nullable String mimeType) {
+        return codecNameForMimeType(mimeType) != null;
+    }
+
+    /** Returns whether the installed native library actually contains a decoder for this MIME. */
     public static boolean supportsMimeType(@Nullable String mimeType) {
         String codecName = codecNameForMimeType(mimeType);
         return codecName != null && isAvailable() && nativeHasDecoder(codecName);
