@@ -77,6 +77,23 @@ for decoder in "${DECODERS[@]}"; do
   COMMON_DECODER_FLAGS+=("--enable-decoder=${decoder}")
 done
 
+stage_headers() {
+  local install_dir="$1"
+  local required_header="${OUTPUT_ROOT}/include/libavcodec/avcodec.h"
+
+  if [[ -f "${required_header}" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${install_dir}/include/libavcodec/avcodec.h" ]]; then
+    return 1
+  fi
+
+  rm -rf "${OUTPUT_ROOT}/include"
+  mkdir -p "${OUTPUT_ROOT}/include"
+  cp -R "${install_dir}/include/." "${OUTPUT_ROOT}/include/"
+  [[ -f "${required_header}" ]]
+}
+
 build_abi() {
   local abi="$1"
   local arch="$2"
@@ -85,13 +102,17 @@ build_abi() {
 
   local final_dir="${OUTPUT_ROOT}/${abi}"
   local marker="${final_dir}/.ffmpeg-${FFMPEG_VERSION}-static"
-  if [[ -f "${marker}" && -f "${final_dir}/libavcodec.a" && -f "${final_dir}/libavutil.a" ]]; then
-    echo "FFmpeg ${FFMPEG_VERSION} static libraries already built for ${abi}."
-    return
-  fi
-
   local build_dir="${WORK_ROOT}/build-${abi}-static"
   local install_dir="${WORK_ROOT}/install-${abi}-static"
+
+  if [[ -f "${marker}" && -f "${final_dir}/libavcodec.a" && -f "${final_dir}/libavutil.a" ]]; then
+    if stage_headers "${install_dir}"; then
+      echo "FFmpeg ${FFMPEG_VERSION} static libraries already built for ${abi}."
+      return
+    fi
+    echo "Cached ${abi} libraries exist but public headers are missing; rebuilding ${abi}."
+  fi
+
   rm -rf "${build_dir}" "${install_dir}" "${final_dir}"
   mkdir -p "${build_dir}" "${install_dir}" "${final_dir}"
 
@@ -140,8 +161,9 @@ build_abi() {
   cp "${install_dir}/lib/libavcodec.a" "${final_dir}/libavcodec.a"
   cp "${install_dir}/lib/libavutil.a" "${final_dir}/libavutil.a"
 
-  if [[ ! -d "${OUTPUT_ROOT}/include" ]]; then
-    cp -R "${install_dir}/include" "${OUTPUT_ROOT}/include"
+  if ! stage_headers "${install_dir}"; then
+    echo "FFmpeg public headers were not staged correctly from ${install_dir}/include." >&2
+    exit 1
   fi
 
   printf '%s\n' "${FFMPEG_VERSION}" > "${marker}"
@@ -149,5 +171,10 @@ build_abi() {
 
 build_abi "arm64-v8a" "aarch64" "armv8-a" "aarch64-linux-android"
 build_abi "armeabi-v7a" "arm" "armv7-a" "armv7a-linux-androideabi"
+
+if [[ ! -f "${OUTPUT_ROOT}/include/libavcodec/avcodec.h" ]]; then
+  echo "FFmpeg staging is incomplete: libavcodec/avcodec.h is missing." >&2
+  exit 1
+fi
 
 echo "Minimal FFmpeg video decoder static libraries ready at ${OUTPUT_ROOT}."
