@@ -54,7 +54,9 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
         if (mimeType == null || !MimeTypes.isVideo(mimeType)) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE);
         }
-        if (!CineFfmpegLibrary.supportsMimeType(mimeType)) {
+        // Do not load the native FFmpeg library while Media3 is merely probing renderers. The
+        // library is part of this APK and is verified when createDecoder() is actually selected.
+        if (!CineFfmpegLibrary.isDeclaredVideoMimeType(mimeType)) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE);
         }
         if (format.cryptoType != C.CRYPTO_TYPE_NONE) {
