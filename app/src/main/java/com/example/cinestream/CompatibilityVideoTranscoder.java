@@ -140,11 +140,15 @@ final class CompatibilityVideoTranscoder {
                 .build();
 
         // Transformer normally tries only its preferred MediaCodec decoder. For compatibility
-        // export we deliberately allow lower-priority decoder fallback: a device may reject 4K in
-        // its hardware decoder while a platform software decoder can still decode it offline.
+        // export we deliberately allow lower-priority decoder fallback: a device may reject the
+        // source in its hardware decoder while a platform software decoder can still decode it
+        // offline. Do not configure MediaCodec's operating-rate hint here. Transformer can request
+        // an extremely high operating rate for export throughput, and some vendor codecs reject
+        // that otherwise optional hint with BAD_VALUE. Compatibility recovery should prioritize
+        // decoder acceptance and correctness over maximum export speed.
         DefaultDecoderFactory decoderFactory = new DefaultDecoderFactory.Builder(context)
                 .setEnableDecoderFallback(true)
-                .setShouldConfigureOperatingRate(true)
+                .setShouldConfigureOperatingRate(false)
                 .build();
         DefaultAssetLoaderFactory assetLoaderFactory = new DefaultAssetLoaderFactory(
                 context,
