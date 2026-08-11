@@ -135,6 +135,25 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     && previousPlaybackKey.equals(playbackKey);
             if (!sameLogicalItem) {
                 compatibilityTranscodeAttempted = false;
+                if (decoderMode.preferSoftwareVideo) {
+                    decoderMode = decoderMode.withoutSoftwareVideo();
+                    String targetPlaybackKey = playbackKey;
+                    uiHandler.post(() -> {
+                        if (exoPlayer == null
+                                || targetPlaybackKey == null
+                                || !targetPlaybackKey.equals(playbackKey)) {
+                            return;
+                        }
+                        ArrayList<MediaItem> items = snapshotMediaItems();
+                        int itemIndex = exoPlayer.getCurrentMediaItemIndex();
+                        long position = Math.max(0L, exoPlayer.getCurrentPosition());
+                        boolean playWhenReady = exoPlayer.getPlayWhenReady();
+                        Log.i("VideoCompatibility",
+                                "Resetting to hardware-first video for new media item");
+                        rebuildPlayerPreservingCompatibility(
+                                items, itemIndex, position, playWhenReady);
+                    });
+                }
             }
             if (transitionedUri != null
                     && compatibilityPlaybackKey != null
