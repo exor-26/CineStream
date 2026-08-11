@@ -68,17 +68,17 @@ tasks.register('buildCineFfmpeg', Exec) {
 
     inputs.file(cineFfmpegBuildScript)
     outputs.files(
-            file("${cineFfmpegRoot}/arm64-v8a/libavcodec.so"),
-            file("${cineFfmpegRoot}/arm64-v8a/libavutil.so"),
-            file("${cineFfmpegRoot}/armeabi-v7a/libavcodec.so"),
-            file("${cineFfmpegRoot}/armeabi-v7a/libavutil.so"),
+            file("${cineFfmpegRoot}/arm64-v8a/libavcodec.a"),
+            file("${cineFfmpegRoot}/arm64-v8a/libavutil.a"),
+            file("${cineFfmpegRoot}/armeabi-v7a/libavcodec.a"),
+            file("${cineFfmpegRoot}/armeabi-v7a/libavutil.a"),
             file("${cineFfmpegRoot}/include/libavcodec/avcodec.h")
     )
 
     commandLine 'bash', cineFfmpegBuildScript.absolutePath, cineFfmpegRoot.absolutePath
 }
 
-// Native configure/compile tasks require the generated FFmpeg headers and shared libraries.
+// Native configure/compile tasks require the generated FFmpeg headers and static libraries.
 tasks.configureEach { task ->
     if (task.name == 'preBuild'
             || task.name.startsWith('configureCMake')
