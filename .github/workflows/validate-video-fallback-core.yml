@@ -22,5 +22,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
       - name: Run unit tests and compile release
         run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
