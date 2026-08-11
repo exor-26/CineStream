@@ -18,8 +18,8 @@ public final class CineFfmpegLibrary {
             synchronized (CineFfmpegLibrary.class) {
                 if (!loadAttempted) {
                     try {
-                        System.loadLibrary("avutil");
-                        System.loadLibrary("avcodec");
+                        // libavcodec/libavutil are linked into this one JNI shared library so
+                        // Android has no extra FFmpeg SONAMEs to load at runtime.
                         System.loadLibrary("cinestream_ffmpeg");
                         available = nativeIsUsable();
                     } catch (UnsatisfiedLinkError | SecurityException error) {
