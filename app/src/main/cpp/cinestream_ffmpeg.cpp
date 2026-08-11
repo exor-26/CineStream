@@ -34,6 +34,7 @@ namespace {
 
 constexpr int RESULT_FRAME = 0;
 constexpr int RESULT_NO_FRAME = 1;
+constexpr int RESULT_END_OF_STREAM = 2;
 constexpr int RESULT_ERROR = -1;
 constexpr int VIDEO_OUTPUT_MODE_SURFACE_YUV = 1;
 
@@ -798,17 +799,25 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeDecodePacket(
         jboolean decodeOnly
 ) {
     auto* context = reinterpret_cast<DecoderContext*>(nativeContext);
-    if (context == nullptr || context->codec == nullptr || encodedData == nullptr || length < 0) {
+    if (context == nullptr || context->codec == nullptr || length < 0 || outputBuffer == nullptr) {
         return RESULT_ERROR;
     }
 
-    auto* base = static_cast<uint8_t*>(env->GetDirectBufferAddress(encodedData));
-    jlong capacity = env->GetDirectBufferCapacity(encodedData);
-    if (base == nullptr || offset < 0 || length < 0 || static_cast<jlong>(offset) + length > capacity) {
-        return RESULT_ERROR;
+    const uint8_t* packetData = nullptr;
+    if (length > 0) {
+        if (encodedData == nullptr) {
+            return RESULT_ERROR;
+        }
+        auto* base = static_cast<uint8_t*>(env->GetDirectBufferAddress(encodedData));
+        jlong capacity = env->GetDirectBufferCapacity(encodedData);
+        if (base == nullptr
+                || offset < 0
+                || static_cast<jlong>(offset) + length > capacity) {
+            return RESULT_ERROR;
+        }
+        packetData = base + offset;
     }
 
-    const uint8_t* packetData = base + offset;
     if (length > 0) {
         if (context->pendingPackets.empty()) {
             int sendResult = sendPacket(context, packetData, length, presentationTimeUs);
@@ -899,7 +908,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeDecodePacket(
             return RESULT_ERROR;
         }
         if (receiveResult == AVERROR_EOF) {
-            return RESULT_NO_FRAME;
+            return RESULT_END_OF_STREAM;
         }
 
         char error[AV_ERROR_MAX_STRING_SIZE] = {};
@@ -907,6 +916,38 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeDecodePacket(
         LOGE("avcodec_receive_frame failed: %s", error);
         return RESULT_ERROR;
     }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeSendEndOfStream(
+        JNIEnv*,
+        jclass,
+        jlong nativeContext
+) {
+    auto* context = reinterpret_cast<DecoderContext*>(nativeContext);
+    if (context == nullptr || context->codec == nullptr) {
+        return RESULT_ERROR;
+    }
+    if (!context->pendingPackets.empty()) {
+        LOGE("Cannot signal FFmpeg EOS while compressed packets remain pending");
+        return RESULT_NO_FRAME;
+    }
+
+    int result = avcodec_send_packet(context->codec, nullptr);
+    if (result == 0) {
+        return RESULT_FRAME;
+    }
+    if (result == AVERROR(EAGAIN)) {
+        return RESULT_NO_FRAME;
+    }
+    if (result == AVERROR_EOF) {
+        return RESULT_END_OF_STREAM;
+    }
+
+    char error[AV_ERROR_MAX_STRING_SIZE] = {};
+    av_strerror(result, error, sizeof(error));
+    LOGE("Unable to signal FFmpeg EOS: %s", error);
+    return RESULT_ERROR;
 }
 
 extern "C" JNIEXPORT jint JNICALL
