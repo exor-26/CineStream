@@ -7,6 +7,7 @@ plugins {
 def cineFfmpegVersion = "8.1.2"
 def cineFfmpegRoot = file("${rootProject.projectDir}/.native/ffmpeg-${cineFfmpegVersion}")
 def cineFfmpegBuildScript = file("${rootProject.projectDir}/scripts/build_ffmpeg_android.sh")
+def cineFfmpegRootForCmake = cineFfmpegRoot.absolutePath.replace('\\', '/')
 
 android {
     namespace 'com.example.cinestream'
@@ -25,7 +26,7 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments "-DFFMPEG_ROOT=${cineFfmpegRoot.absolutePath}"
+                arguments "-DFFMPEG_ROOT=${cineFfmpegRootForCmake}"
                 cppFlags "-std=c++17"
                 abiFilters "arm64-v8a", "armeabi-v7a"
             }
@@ -75,7 +76,11 @@ tasks.register('buildCineFfmpeg', Exec) {
             file("${cineFfmpegRoot}/include/libavcodec/avcodec.h")
     )
 
-    commandLine 'bash', cineFfmpegBuildScript.absolutePath, cineFfmpegRoot.absolutePath
+    // Run Bash from the repository root and pass POSIX-style relative paths. Passing Windows
+    // absolute paths (C:\\...) directly to Git Bash causes backslashes to be consumed as escape
+    // characters, producing paths such as C:Users... and breaking local Windows builds.
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'scripts/build_ffmpeg_android.sh', ".native/ffmpeg-${cineFfmpegVersion}"
 }
 
 // Native configure/compile tasks require the generated FFmpeg headers and static libraries.
