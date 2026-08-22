@@ -34,29 +34,35 @@ import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.Timeline;
 import androidx.media3.common.TrackGroup;
 import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.source.TrackGroupArray;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.source.FilteringMediaSource;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.MergingMediaSource;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
-import androidx.media3.exoplayer.trackselection.MappingTrackSelector;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
+import com.example.cinestream.ffmpeg.CineFfmpegLibrary;
+
+import java.io.File;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 
 @UnstableApi
 public class VideoPlayerActivity extends AppCompatActivity {
 
-    // The player can be opened from inside the app or through an external ACTION_VIEW intent.
-    // These extras cover the richer in-app path while still allowing external fallback.
     public static final String EXTRA_VIDEO_URI = "VIDEO_URI";
     public static final String EXTRA_PLAYBACK_KEY = "PLAYBACK_KEY";
     public static final String EXTRA_VIDEO_TITLE = "VIDEO_TITLE";
@@ -67,6 +73,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private static final int ACTION_SUBTITLE_OFF = -1;
 
     private ExoPlayer exoPlayer;
+    private DefaultTrackSelector trackSelector;
     private PlayerView playerView;
     private ImageButton rotateButton;
     private ImageButton cropButton;
@@ -85,6 +92,16 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private boolean isLockedInPortrait = false;
     private boolean isLockedInLandscape = false;
     private boolean isControlsVisible = true;
+    private boolean compatibilityTranscodeAttempted = false;
+    private boolean capabilityWarningLogged = false;
+    private CompatibilityVideoTranscoder.Session compatibilityTranscodeSession;
+    private Uri compatibilityOriginalUri;
+    private Uri compatibilityVideoUri;
+    private String compatibilityPlaybackKey;
+
+    private PlaybackEnginePolicy.DecoderMode decoderMode =
+            PlaybackEnginePolicy.DecoderMode.HARDWARE_FIRST;
+    private DeviceVideoCapabilities.Assessment currentVideoAssessment;
 
     private GestureDetector gestureDetector;
     private AudioManager audioManager;
@@ -100,13 +117,87 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private final Runnable hideBrightnessOverlayRunnable = () -> brightnessOverlay.setVisibility(View.GONE);
     private final Runnable hideVolumeOverlayRunnable = () -> volumeOverlay.setVisibility(View.GONE);
 
+    private final Player.Listener playbackListener = new Player.Listener() {
+        @Override
+        public void onAudioSessionIdChanged(int audioSessionId) {
+            attachLoudnessEnhancer(audioSessionId);
+            applyVolumeBoost();
+        }
+
+        @Override
+        public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+            if (mediaItem == null) {
+                return;
+            }
+            String previousPlaybackKey = playbackKey;
+            playbackKey = mediaItem.mediaId;
+            Uri transitionedUri = mediaItem.localConfiguration != null
+                    ? mediaItem.localConfiguration.uri : null;
+            boolean sameLogicalItem = previousPlaybackKey != null
+                    && previousPlaybackKey.equals(playbackKey);
+            if (!sameLogicalItem) {
+                compatibilityTranscodeAttempted = false;
+                if (decoderMode.preferSoftwareVideo) {
+                    decoderMode = decoderMode.withoutSoftwareVideo();
+                    String targetPlaybackKey = playbackKey;
+                    uiHandler.post(() -> {
+                        if (exoPlayer == null
+                                || targetPlaybackKey == null
+                                || !targetPlaybackKey.equals(playbackKey)) {
+                            return;
+                        }
+                        ArrayList<MediaItem> items = snapshotMediaItems();
+                        int itemIndex = exoPlayer.getCurrentMediaItemIndex();
+                        long position = Math.max(0L, exoPlayer.getCurrentPosition());
+                        boolean playWhenReady = exoPlayer.getPlayWhenReady();
+                        Log.i("VideoCompatibility",
+                                "Resetting to hardware-first video for new media item");
+                        rebuildPlayerPreservingCompatibility(
+                                items, itemIndex, position, playWhenReady);
+                    });
+                }
+            }
+            if (transitionedUri != null
+                    && compatibilityPlaybackKey != null
+                    && compatibilityPlaybackKey.equals(playbackKey)
+                    && compatibilityVideoUri != null
+                    && compatibilityVideoUri.equals(transitionedUri)
+                    && compatibilityOriginalUri != null) {
+                videoUri = compatibilityOriginalUri;
+            } else if (transitionedUri != null) {
+                videoUri = transitionedUri;
+            }
+            currentVideoAssessment = null;
+            capabilityWarningLogged = false;
+            tvVideoName.setText(resolveCurrentTitle());
+        }
+
+        @Override
+        public void onPositionDiscontinuity(
+                Player.PositionInfo oldPosition,
+                Player.PositionInfo newPosition,
+                int reason
+        ) {
+            savePositionInfo(oldPosition);
+        }
+
+        @Override
+        public void onTracksChanged(Tracks tracks) {
+            assessSelectedVideoTrack(tracks);
+        }
+
+        @Override
+        public void onPlayerError(PlaybackException error) {
+            handlePlaybackError(error);
+        }
+    };
+
     @OptIn(markerClass = UnstableApi.class)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_player);
 
-        // Prevent the screen from dimming mid-playback.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         playerView = findViewById(R.id.player_view);
@@ -119,8 +210,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         brightnessIcon = findViewById(R.id.brightness_icon);
         volumeOverlay = findViewById(R.id.overlay_container);
 
-        // Overlays are positioned after layout because they depend on the actual screen height,
-        // not just the XML measurements.
         getWindow().getDecorView().post(() -> {
             int screenHeight = getWindow().getDecorView().getHeight();
             int targetMargin = screenHeight / 4;
@@ -152,9 +241,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         });
 
         final View topBar = findViewById(R.id.top_bar);
-
-        // The top bar needs different padding rules in portrait and landscape because immersive
-        // video playback should still look correct around cutouts and status bars.
         ViewCompat.setOnApplyWindowInsetsListener(topBar, (v, insets) -> {
             int sidePad = (int) (8 * getResources().getDisplayMetrics().density);
             int sidePadLandscape = (int) (24 * getResources().getDisplayMetrics().density);
@@ -184,10 +270,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
             }
             return insets;
         });
-
         topBar.requestApplyInsets();
 
-        // Resolve the media source first. If this fails, there is nothing useful the player can do.
         videoUri = resolveVideoUri();
         if (videoUri == null) {
             Log.e("VideoError", "Invalid video URI");
@@ -200,80 +284,27 @@ public class VideoPlayerActivity extends AppCompatActivity {
         playlistTitles = getIntent().getStringArrayListExtra(EXTRA_PLAYLIST_TITLES);
         tvVideoName.setText(resolveDisplayTitle(videoUri));
 
-        // Prefer extension renderers so the FFmpeg decoder can handle formats that the device
-        // codec stack might reject, especially less common audio tracks.
-        DefaultTrackSelector trackSelector = new DefaultTrackSelector(this);
-        trackSelector.setParameters(
-                trackSelector.buildUponParameters()
-                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                        .build()
+        playerView.setControllerVisibilityListener(
+                (PlayerView.ControllerVisibilityListener) visibility -> {
+                    if (visibility == View.VISIBLE) {
+                        syncCustomControls(true);
+                    } else {
+                        syncCustomControls(false);
+                    }
+                }
         );
 
-        DefaultRenderersFactory renderersFactory =
-                new DefaultRenderersFactory(this)
-                        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-                        .setEnableDecoderFallback(true);
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        maxVolume = audioManager != null
+                ? audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) : 1f;
+        currentVolume = audioManager != null
+                ? audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) : 0f;
 
-        exoPlayer = new ExoPlayer.Builder(this, renderersFactory)
-                .setTrackSelector(trackSelector)
-                .build();
-
-        playerView.setPlayer(exoPlayer);
-        playerView.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
-            if (visibility == View.VISIBLE) {
-                syncCustomControls(true);
-            } else {
-                syncCustomControls(false);
-            }
-        });
-
-        // Restore the last playback position before starting playback so resume feels immediate.
         ArrayList<MediaItem> playlistItems = buildPlaylistItems();
         int startIndex = resolveStartIndex(playlistItems);
-        if (playlistItems.isEmpty()) {
-            MediaItem mediaItem = new MediaItem.Builder()
-                    .setUri(videoUri)
-                    .setMediaId(playbackKey)
-                    .build();
-            exoPlayer.setMediaItem(mediaItem);
-        } else {
-            exoPlayer.setMediaItems(playlistItems, startIndex, C.TIME_UNSET);
-        }
-        exoPlayer.prepare();
         long savedPosition = PlaybackPrefs.getInstance(this).getPosition(playbackKey);
-        if (savedPosition > 0) exoPlayer.seekTo(savedPosition);
-        exoPlayer.play();
-        exoPlayer.addListener(new Player.Listener() {
-            @Override
-            public void onAudioSessionIdChanged(int audioSessionId) {
-                attachLoudnessEnhancer(audioSessionId);
-                applyVolumeBoost();
-            }
+        createPlayer(playlistItems, startIndex, savedPosition, true);
 
-            @Override
-            public void onMediaItemTransition(MediaItem mediaItem, int reason) {
-                if (mediaItem == null) {
-                    return;
-                }
-                playbackKey = mediaItem.mediaId;
-                videoUri = mediaItem.localConfiguration != null ? mediaItem.localConfiguration.uri : videoUri;
-                tvVideoName.setText(resolveCurrentTitle());
-            }
-        });
-
-        AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                .build();
-        exoPlayer.setAudioAttributes(audioAttributes, true);
-
-        // Volume changes are routed through AudioManager because they affect the actual media stream.
-        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-        maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-        applyVolumeBoost();
-
-        // Use the current window brightness as the baseline for swipe gestures.
         currentBrightness = getWindow().getAttributes().screenBrightness;
 
         setupRotationButton();
@@ -288,6 +319,470 @@ public class VideoPlayerActivity extends AppCompatActivity {
         setupInteractionListeners();
         hideSystemUI();
         resetHideControlsTimer();
+    }
+
+    private void initializePlayerShell() {
+        releasePlayerOnly();
+
+        trackSelector = new DefaultTrackSelector(this);
+        trackSelector.setParameters(
+                trackSelector.buildUponParameters()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
+        );
+
+        exoPlayer = new ExoPlayer.Builder(
+                this,
+                PlaybackEnginePolicy.createRenderersFactory(this, decoderMode)
+        )
+                .setTrackSelector(trackSelector)
+                .build();
+
+        AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build();
+        exoPlayer.setAudioAttributes(audioAttributes, true);
+        exoPlayer.addListener(playbackListener);
+        playerView.setPlayer(exoPlayer);
+    }
+
+    private void createPlayer(
+            List<MediaItem> mediaItems,
+            int startIndex,
+            long startPositionMs,
+            boolean playWhenReady
+    ) {
+        initializePlayerShell();
+
+        if (mediaItems == null || mediaItems.isEmpty()) {
+            MediaItem mediaItem = new MediaItem.Builder()
+                    .setUri(videoUri)
+                    .setMediaId(playbackKey)
+                    .build();
+            exoPlayer.setMediaItem(mediaItem);
+            if (startPositionMs > 0) {
+                exoPlayer.seekTo(startPositionMs);
+            }
+        } else {
+            int safeIndex = Math.max(0, Math.min(startIndex, mediaItems.size() - 1));
+            exoPlayer.setMediaItems(mediaItems, safeIndex, C.TIME_UNSET);
+            if (startPositionMs > 0) {
+                exoPlayer.seekTo(safeIndex, startPositionMs);
+            }
+        }
+
+        exoPlayer.prepare();
+        exoPlayer.setPlayWhenReady(playWhenReady);
+        applyVolumeBoost();
+    }
+
+    private void createPlayerWithCompatibilityVideo(
+            List<MediaItem> mediaItems,
+            int startIndex,
+            long startPositionMs,
+            boolean playWhenReady,
+            Uri originalUri,
+            Uri compatibleVideoUri,
+            String logicalPlaybackKey
+    ) {
+        if (mediaItems == null || mediaItems.isEmpty()) {
+            createPlayer(mediaItems, startIndex, startPositionMs, playWhenReady);
+            return;
+        }
+
+        compatibilityOriginalUri = originalUri;
+        compatibilityVideoUri = compatibleVideoUri;
+        compatibilityPlaybackKey = logicalPlaybackKey;
+        videoUri = originalUri;
+        playbackKey = logicalPlaybackKey;
+
+        initializePlayerShell();
+        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this);
+        ArrayList<MediaSource> sources = new ArrayList<>();
+        int safeIndex = Math.max(0, Math.min(startIndex, mediaItems.size() - 1));
+        for (int i = 0; i < mediaItems.size(); i++) {
+            MediaItem item = mediaItems.get(i);
+            if (i == safeIndex) {
+                sources.add(buildCompatibilityMediaSource(
+                        sourceFactory,
+                        item,
+                        compatibleVideoUri
+                ));
+            } else {
+                sources.add(sourceFactory.createMediaSource(item));
+            }
+        }
+
+        exoPlayer.setMediaSources(
+                sources,
+                safeIndex,
+                startPositionMs > 0 ? startPositionMs : C.TIME_UNSET
+        );
+        exoPlayer.prepare();
+        exoPlayer.setPlayWhenReady(playWhenReady);
+        applyVolumeBoost();
+    }
+
+    private MediaSource buildCompatibilityMediaSource(
+            DefaultMediaSourceFactory sourceFactory,
+            MediaItem originalItem,
+            Uri compatibleVideoUri
+    ) {
+        MediaItem compatibleVideoItem = new MediaItem.Builder()
+                .setUri(compatibleVideoUri)
+                .setMediaId(originalItem.mediaId)
+                .build();
+        MediaSource compatibleVideoSource = new FilteringMediaSource(
+                sourceFactory.createMediaSource(compatibleVideoItem),
+                C.TRACK_TYPE_VIDEO
+        );
+
+        Set<Integer> originalTrackTypes = new HashSet<>();
+        originalTrackTypes.add(C.TRACK_TYPE_AUDIO);
+        originalTrackTypes.add(C.TRACK_TYPE_TEXT);
+        originalTrackTypes.add(C.TRACK_TYPE_METADATA);
+        MediaSource originalNonVideoSource = new FilteringMediaSource(
+                sourceFactory.createMediaSource(originalItem),
+                originalTrackTypes
+        );
+
+        return new MergingMediaSource(
+                true,
+                true,
+                compatibleVideoSource,
+                originalNonVideoSource
+        );
+    }
+
+    private void rebuildPlayerPreservingCompatibility(
+            List<MediaItem> items,
+            int itemIndex,
+            long position,
+            boolean playWhenReady
+    ) {
+        if (compatibilityVideoUri != null
+                && compatibilityOriginalUri != null
+                && compatibilityPlaybackKey != null
+                && compatibilityPlaybackKey.equals(playbackKey)) {
+            createPlayerWithCompatibilityVideo(
+                    items,
+                    itemIndex,
+                    position,
+                    playWhenReady,
+                    compatibilityOriginalUri,
+                    compatibilityVideoUri,
+                    compatibilityPlaybackKey
+            );
+        } else {
+            createPlayer(items, itemIndex, position, playWhenReady);
+        }
+    }
+
+    private void handlePlaybackError(PlaybackException error) {
+        Log.e("VideoPlayer", "Playback failed: " + error.getErrorCodeName(), error);
+
+        if (PlaybackEnginePolicy.shouldRetryWithSoftwareAudio(decoderMode, error)) {
+            decoderMode = decoderMode.withSoftwareAudio();
+            ArrayList<MediaItem> items = snapshotMediaItems();
+            int itemIndex = exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0;
+            long position = exoPlayer != null ? Math.max(0L, exoPlayer.getCurrentPosition()) : 0L;
+            boolean playWhenReady = exoPlayer == null || exoPlayer.getPlayWhenReady();
+
+            Log.w("VideoPlayer", "Retrying with FFmpeg audio renderer at " + position + " ms");
+            GlassUi.showToast(this, "Switching to compatibility audio decoder…");
+            rebuildPlayerPreservingCompatibility(items, itemIndex, position, playWhenReady);
+            return;
+        }
+
+        if (PlaybackEnginePolicy.shouldRetryWithSoftwareVideo(decoderMode, error)) {
+            decoderMode = decoderMode.withSoftwareVideo();
+            ArrayList<MediaItem> items = snapshotMediaItems();
+            int itemIndex = exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0;
+            long position = exoPlayer != null ? Math.max(0L, exoPlayer.getCurrentPosition()) : 0L;
+            boolean playWhenReady = exoPlayer == null || exoPlayer.getPlayWhenReady();
+
+            Format failedVideo = PlaybackEnginePolicy.getFailedVideoFormat(error);
+            Log.w("VideoPlayer",
+                    "Retrying with bundled software video renderer for "
+                            + (failedVideo != null ? failedVideo.sampleMimeType : "video")
+                            + " at " + position + " ms");
+            rebuildPlayerPreservingCompatibility(items, itemIndex, position, playWhenReady);
+            return;
+        }
+
+        Format failedVideo = PlaybackEnginePolicy.getFailedVideoFormat(error);
+        DeviceVideoCapabilities.Assessment assessment = currentVideoAssessment;
+        if (failedVideo != null
+                && (assessment == null
+                || assessment.support == DeviceVideoCapabilities.Support.UNKNOWN)) {
+            assessment = DeviceVideoCapabilities.assess(failedVideo);
+            currentVideoAssessment = assessment;
+        }
+
+        boolean canCreateCompatibilityVideo = assessment != null
+                && (assessment.support
+                == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY
+                || (assessment.support == DeviceVideoCapabilities.Support.NO_PLATFORM_DECODER
+                && CineFfmpegLibrary.supportsTransformerMimeType(failedVideo != null
+                ? failedVideo.sampleMimeType
+                : null)));
+
+        if (!compatibilityTranscodeAttempted
+                && PlaybackEnginePolicy.isVideoDecoderFailure(error)
+                && failedVideo != null
+                && failedVideo.width > 0
+                && failedVideo.height > 0
+                && canCreateCompatibilityVideo) {
+            compatibilityTranscodeAttempted = true;
+            startCompatibilityRecovery(failedVideo);
+            return;
+        }
+
+        if (assessment != null
+                && assessment.support == DeviceVideoCapabilities.Support.NO_PLATFORM_DECODER) {
+            GlassUi.showToast(this,
+                    "No compatible video decoder is available on this device.");
+            return;
+        }
+        if (assessment != null
+                && assessment.support
+                == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY) {
+            GlassUi.showToast(this,
+                    "This device could not create or play a compatible version of this video.");
+            return;
+        }
+
+        GlassUi.showToast(this, "Playback failed: " + error.getErrorCodeName());
+    }
+
+    private ArrayList<MediaItem> snapshotMediaItems() {
+        ArrayList<MediaItem> items = new ArrayList<>();
+        if (exoPlayer == null) {
+            return items;
+        }
+        for (int i = 0; i < exoPlayer.getMediaItemCount(); i++) {
+            MediaItem item = exoPlayer.getMediaItemAt(i);
+            if (compatibilityPlaybackKey != null
+                    && compatibilityPlaybackKey.equals(item.mediaId)
+                    && item.localConfiguration != null
+                    && compatibilityVideoUri != null
+                    && compatibilityVideoUri.equals(item.localConfiguration.uri)
+                    && compatibilityOriginalUri != null) {
+                item = new MediaItem.Builder()
+                        .setUri(compatibilityOriginalUri)
+                        .setMediaId(item.mediaId)
+                        .build();
+            }
+            items.add(item);
+        }
+        return items;
+    }
+
+    private void startCompatibilityRecovery(Format failedVideo) {
+        if (videoUri == null || playbackKey == null) {
+            GlassUi.showToast(this, "Unable to resolve the original video for compatibility mode.");
+            return;
+        }
+
+        ArrayList<MediaItem> items = snapshotMediaItems();
+        int itemIndex = exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0;
+        long position = exoPlayer != null ? Math.max(0L, exoPlayer.getCurrentPosition()) : 0L;
+        boolean playWhenReady = exoPlayer == null || exoPlayer.getPlayWhenReady();
+        Uri sourceUri = videoUri;
+        String sourceKey = playbackKey;
+
+        if (items.isEmpty()) {
+            items.add(new MediaItem.Builder()
+                    .setUri(sourceUri)
+                    .setMediaId(sourceKey)
+                    .build());
+            itemIndex = 0;
+        }
+
+        final ArrayList<MediaItem> recoveryItems = items;
+        final int recoveryIndex = itemIndex;
+        final long recoveryPosition = position;
+        final boolean recoveryPlayWhenReady = playWhenReady;
+
+        releasePlayerOnly();
+        compatibilityTranscodeSession = CompatibilityVideoTranscoder.start(
+                this,
+                sourceUri,
+                failedVideo.width,
+                failedVideo.height,
+                failedVideo.frameRate,
+                new CompatibilityVideoTranscoder.Callback() {
+                    @Override
+                    public void onReady(
+                            File file,
+                            CompatibilityVideoPolicy.Target target,
+                            boolean fromCache
+                    ) {
+                        compatibilityTranscodeSession = null;
+                        if (isFinishing() || isDestroyed()) {
+                            return;
+                        }
+                        Uri compatibleUri = Uri.fromFile(file);
+                        compatibilityOriginalUri = sourceUri;
+                        compatibilityVideoUri = compatibleUri;
+                        compatibilityPlaybackKey = sourceKey;
+                        videoUri = sourceUri;
+                        playbackKey = sourceKey;
+                        Log.i("VideoCompatibility",
+                                (fromCache ? "Using cached " : "Created ")
+                                        + "H.264 compatibility video " + target);
+                        createPlayerWithCompatibilityVideo(
+                                recoveryItems,
+                                recoveryIndex,
+                                recoveryPosition,
+                                recoveryPlayWhenReady,
+                                sourceUri,
+                                compatibleUri,
+                                sourceKey
+                        );
+                    }
+
+                    @Override
+                    public void onError(String message, Throwable error) {
+                        compatibilityTranscodeSession = null;
+                        if (error != null) {
+                            Log.e("VideoCompatibility", message, error);
+                        } else {
+                            Log.w("VideoCompatibility", message);
+                        }
+                        if (!isFinishing() && !isDestroyed()) {
+                            GlassUi.showToast(
+                                    VideoPlayerActivity.this,
+                                    "Unable to create a compatible video on this device."
+                            );
+                        }
+                    }
+                }
+        );
+    }
+
+    private void assessSelectedVideoTrack(Tracks tracks) {
+        if (tracks == null) {
+            return;
+        }
+        Format recoverableUnselectedVideo = null;
+        int recoverableTrackSupport = C.FORMAT_UNSUPPORTED_TYPE;
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_VIDEO) {
+                continue;
+            }
+            TrackGroup mediaTrackGroup = group.getMediaTrackGroup();
+            for (int i = 0; i < group.length; i++) {
+                if (!group.isTrackSelected(i)) {
+                    Format format = mediaTrackGroup.getFormat(i);
+                    if (recoverableUnselectedVideo == null
+                            && !group.isTrackSupported(i, true)
+                            && CineFfmpegLibrary.supportsTransformerMimeType(
+                            format.sampleMimeType)) {
+                        recoverableUnselectedVideo = format;
+                        recoverableTrackSupport = group.getTrackSupport(i);
+                    }
+                    continue;
+                }
+                Format format = mediaTrackGroup.getFormat(i);
+                currentVideoAssessment = DeviceVideoCapabilities.assess(format);
+                Log.i("VideoCapability",
+                        "mime=" + format.sampleMimeType
+                                + " size=" + format.width + "x" + format.height
+                                + " fps=" + format.frameRate
+                                + " support=" + currentVideoAssessment.support
+                                + " decoder=" + currentVideoAssessment.decoderName
+                                + " hardware=" + currentVideoAssessment.hardwareAccelerated);
+
+                if (!capabilityWarningLogged
+                        && currentVideoAssessment.support
+                        == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY) {
+                    capabilityWarningLogged = true;
+                    Log.w("VideoCapability",
+                            "Selected video exceeds the device-reported decode envelope; "
+                                    + "playback is still attempted because OEM tables can under-report.");
+                }
+                return;
+            }
+        }
+
+        if (recoverableUnselectedVideo != null) {
+            startCompatibilityForUnselectedVideo(
+                    recoverableUnselectedVideo,
+                    recoverableTrackSupport
+            );
+        }
+    }
+
+    private void startCompatibilityForUnselectedVideo(Format format, int trackSupport) {
+        currentVideoAssessment = DeviceVideoCapabilities.assess(format);
+        Log.w("VideoCapability",
+                "No video track was selected; routing through compatibility conversion."
+                        + " mime=" + format.sampleMimeType
+                        + " codecs=" + format.codecs
+                        + " size=" + format.width + "x" + format.height
+                        + " fps=" + format.frameRate
+                        + " trackSupport=" + trackSupport
+                        + " platformSupport=" + currentVideoAssessment.support);
+
+        if (compatibilityTranscodeAttempted
+                || format.width <= 0
+                || format.height <= 0) {
+            return;
+        }
+
+        compatibilityTranscodeAttempted = true;
+        String recoveryPlaybackKey = playbackKey;
+        uiHandler.post(() -> {
+            if (isFinishing()
+                    || isDestroyed()
+                    || exoPlayer == null
+                    || compatibilityTranscodeSession != null
+                    || recoveryPlaybackKey == null
+                    || !recoveryPlaybackKey.equals(playbackKey)) {
+                return;
+            }
+            startCompatibilityRecovery(format);
+        });
+    }
+
+    private void savePositionInfo(Player.PositionInfo positionInfo) {
+        if (positionInfo == null || positionInfo.mediaItem == null) {
+            return;
+        }
+        String key = positionInfo.mediaItem.mediaId;
+        if (key == null || key.isEmpty()) {
+            return;
+        }
+
+        long durationMs = C.TIME_UNSET;
+        if (exoPlayer != null) {
+            Timeline timeline = exoPlayer.getCurrentTimeline();
+            int index = positionInfo.mediaItemIndex;
+            if (!timeline.isEmpty() && index >= 0 && index < timeline.getWindowCount()) {
+                Timeline.Window window = new Timeline.Window();
+                timeline.getWindow(index, window);
+                durationMs = window.getDurationMs();
+            }
+        }
+        if (durationMs <= 0 || durationMs == C.TIME_UNSET) {
+            durationMs = PlaybackPrefs.getInstance(this).getDuration(key);
+        }
+        if (durationMs > 0 && positionInfo.positionMs >= 0) {
+            PlaybackPrefs.getInstance(this).save(key, positionInfo.positionMs, durationMs);
+        }
+    }
+
+    private void releasePlayerOnly() {
+        releaseLoudnessEnhancer();
+        if (exoPlayer != null) {
+            exoPlayer.removeListener(playbackListener);
+            playerView.setPlayer(null);
+            exoPlayer.release();
+            exoPlayer = null;
+        }
+        trackSelector = null;
     }
 
     @Override
@@ -311,8 +806,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         if (exoPlayer != null) {
-            // Save progress before leaving so both in-app playback and external intent playback
-            // can resume from the same stable key.
             if (playbackKey != null) {
                 PlaybackPrefs.getInstance(this).save(
                         playbackKey,
@@ -326,26 +819,24 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
-        if (exoPlayer != null) {
-            exoPlayer.release();
-            exoPlayer = null;
+        if (compatibilityTranscodeSession != null) {
+            compatibilityTranscodeSession.cancel();
+            compatibilityTranscodeSession = null;
         }
-        releaseLoudnessEnhancer();
+        releasePlayerOnly();
+        uiHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
-            // Some system UI states are reset when the window focus changes, especially around
-            // permission prompts or multi-window transitions.
             hideSystemUI();
         }
     }
 
     private Uri resolveVideoUri() {
-        // Internal launches pass the Uri as a string extra. External launches rely on the intent data.
         String internalUri = getIntent().getStringExtra(EXTRA_VIDEO_URI);
         if (internalUri != null && !internalUri.isEmpty()) {
             return Uri.parse(internalUri);
@@ -354,8 +845,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private String resolvePlaybackKey(Uri uri) {
-        // If the app already knows the playback key, use it. Otherwise derive a best-effort key
-        // from the MediaStore id or fall back to the Uri text for external sources.
         String explicitKey = getIntent().getStringExtra(EXTRA_PLAYBACK_KEY);
         if (explicitKey != null && !explicitKey.isEmpty()) {
             return explicitKey;
@@ -371,8 +860,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private String resolveDisplayTitle(Uri uri) {
-        // Prefer a title explicitly passed by the library screen, then fall back to querying the
-        // provider, and finally use the last Uri segment if nothing else is available.
         String explicitTitle = getIntent().getStringExtra(EXTRA_VIDEO_TITLE);
         if (explicitTitle != null && !explicitTitle.isEmpty()) {
             return stripExtension(explicitTitle);
@@ -438,6 +925,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
             }
             MediaItem mediaItem = exoPlayer.getCurrentMediaItem();
             if (mediaItem != null && mediaItem.localConfiguration != null) {
+                if (compatibilityPlaybackKey != null
+                        && compatibilityPlaybackKey.equals(mediaItem.mediaId)
+                        && compatibilityOriginalUri != null) {
+                    return resolveDisplayTitle(compatibilityOriginalUri);
+                }
                 return resolveDisplayTitle(mediaItem.localConfiguration.uri);
             }
         }
@@ -461,7 +953,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
         audioTrackButton.setOnClickListener(v -> {
             if (exoPlayer == null) return;
 
-            DefaultTrackSelector trackSelector = (DefaultTrackSelector) exoPlayer.getTrackSelector();
+            DefaultTrackSelector currentTrackSelector = trackSelector;
+            if (currentTrackSelector == null) return;
             List<Tracks.Group> audioGroups = new java.util.ArrayList<>();
             List<Tracks.Group> subtitleGroups = new java.util.ArrayList<>();
             for (Tracks.Group group : exoPlayer.getCurrentTracks().getGroups()) {
@@ -484,10 +977,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     "Tracks",
                     "Captions",
                     subtitleActions,
-                    item -> applySubtitleSelection(trackSelector, subtitleGroups, item),
+                    item -> applySubtitleSelection(currentTrackSelector, subtitleGroups, item),
                     "Audio",
                     audioActions,
-                    item -> applyAudioSelection(trackSelector, audioGroups, item)
+                    item -> applyAudioSelection(currentTrackSelector, audioGroups, item)
             );
         });
     }
@@ -498,8 +991,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
             TrackGroup trackGroup = audioGroups.get(i).getMediaTrackGroup();
             for (int j = 0; j < trackGroup.length; j++) {
                 Format format = trackGroup.getFormat(j);
-                String title = buildTrackTitle("Track", j, format.language, format.label);
-                String subtitle = buildAudioTrackSubtitle(format, audioGroups.get(i).isTrackSupported(j));
+                int ordinal = actions.size() + 1;
+                String title = AudioTrackFormatter.buildTitle(ordinal, format);
+                String subtitle = AudioTrackFormatter.buildTechnicalDetails(
+                        format, audioGroups.get(i).isTrackSupported(j));
                 if (audioGroups.get(i).isTrackSelected(j)) {
                     subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
                 }
@@ -521,12 +1016,14 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 subtitleEnabled ? "Disable captions" : "Currently off"
         ));
 
+        int ordinal = 1;
         for (int i = 0; i < subtitleGroups.size(); i++) {
             TrackGroup trackGroup = subtitleGroups.get(i).getMediaTrackGroup();
             for (int j = 0; j < trackGroup.length; j++) {
                 Format format = trackGroup.getFormat(j);
-                String title = buildTrackTitle("Caption", j, format.language, format.label);
-                String subtitle = buildSubtitleTrackSubtitle(format, subtitleGroups.get(i).isTrackSupported(j));
+                String title = SubtitleTrackFormatter.buildTitle(ordinal++, format);
+                String subtitle = SubtitleTrackFormatter.buildTechnicalDetails(
+                        format, subtitleGroups.get(i).isTrackSupported(j));
                 if (subtitleGroups.get(i).isTrackSelected(j) && subtitleEnabled) {
                     subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
                 }
@@ -621,8 +1118,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private boolean isAudioFormatSupported(Format format) {
-        // The popup may expose more tracks than we explicitly want to promise. This filter keeps
-        // the user away from formats we do not expect this build to handle reliably.
         String mime = format.sampleMimeType;
         List<String> supported = Arrays.asList(
                 "audio/mp4a-latm",
@@ -663,7 +1158,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
     @SuppressLint("SourceLockedOrientationActivity")
     private void setupRotationButton() {
         rotateButton.setOnClickListener(v -> {
-            // The rotation button acts as a lock/unlock toggle based on the current orientation.
             if (!isLockedInPortrait && getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 isLockedInPortrait = true;
@@ -687,7 +1181,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void setupCropButton() {
         cropButton.setOnClickListener(v -> {
-            // Resize modes are exposed as user-friendly terms rather than raw ExoPlayer constants.
             java.util.ArrayList<GlassUi.ActionItem> actions = new java.util.ArrayList<>();
             actions.add(new GlassUi.ActionItem(0, "Original", "Preserve the source framing"));
             actions.add(new GlassUi.ActionItem(1, "Fill", "Stretch to fill the player bounds"));
@@ -720,7 +1213,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void applyCropping(CropType cropType) {
-        // Update both the underlying resize mode and the icon so the current display choice is visible.
         switch (cropType) {
             case ORIGINAL:
                 playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
@@ -739,8 +1231,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @SuppressLint("ClickableViewAccessibility")
     private void setupGestureDetection() {
-        // Gesture handling splits the screen in half: left controls brightness, right controls volume.
-        // Tap toggles the controls; vertical drag adjusts the matching setting.
         final boolean[] isAdjusting = {false};
         final long[] downTime = {0};
 
@@ -789,8 +1279,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void handleBrightnessChange(float deltaY) {
         if (deltaY != 0) {
-            // Window-level brightness is enough here because the gesture is intended as a temporary
-            // playback adjustment, not a permanent system setting.
             float change = deltaY / 1000;
             WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
             float brightness = layoutParams.screenBrightness + change;
@@ -805,8 +1293,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void handleVolumeChange(float deltaY) {
-        if (deltaY != 0) {
-            // Up to 100% uses the system stream volume; beyond that we apply player-local boost.
+        if (deltaY != 0 && audioManager != null) {
             float deltaPercent = deltaY / Math.max(1f, maxVolume);
             float targetPercent = Math.max(0f, Math.min(200f, getCombinedVolumePercent() + deltaPercent));
 
@@ -821,7 +1308,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void updateBrightnessOverlay(float brightness) {
-        // Only one overlay should be visible at a time, otherwise the feedback gets cluttered.
         brightnessOverlay.removeCallbacks(hideBrightnessOverlayRunnable);
         volumeOverlay.removeCallbacks(hideVolumeOverlayRunnable);
         volumeOverlay.setVisibility(View.GONE);
@@ -906,7 +1392,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void positionOverlay(View overlay) {
-        // Recompute position every time so overlays stay centered even after rotation changes.
         int screenHeight = getWindow().getDecorView().getHeight();
         int topMargin = screenHeight / 8;
 
@@ -920,8 +1405,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void showControls() {
-        // We manage the extra chrome ourselves because the screen has custom top controls in
-        // addition to ExoPlayer's standard controller.
         playerView.showController();
         syncCustomControls(true);
         resetHideControlsTimer();
@@ -929,7 +1412,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void hideControls() {
-        // Hiding both our own views and ExoPlayer's controls creates the clean full-screen state.
         playerView.hideController();
         syncCustomControls(false);
         hideSystemUI();
@@ -952,7 +1434,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @SuppressLint("ClickableViewAccessibility")
     private void setupInteractionListeners() {
-        // Touching the overlays should keep the controls alive long enough for the user to read them.
         View brightnessOverlayView = findViewById(R.id.brightness_overlay_container);
         View volumeOverlayView = findViewById(R.id.overlay_container);
 
@@ -971,13 +1452,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private final Runnable hideControlsRunnable = this::hideControls;
 
     private void resetHideControlsTimer() {
-        // Any user interaction postpones the auto-hide countdown.
         uiHandler.removeCallbacks(hideControlsRunnable);
         uiHandler.postDelayed(hideControlsRunnable, 3000);
     }
 
     private void hideSystemUI() {
-        // Modern insets APIs are used here so immersive mode behaves consistently across Android versions.
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         WindowInsetsControllerCompat controller =
                 WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());

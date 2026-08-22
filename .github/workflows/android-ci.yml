@@ -24,6 +24,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install native toolchain
+        run: sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Cache CineStream FFmpeg build
+        uses: actions/cache@v4
+        with:
+          path: .native/ffmpeg-8.1.2
+          key: cinestream-ffmpeg-8.1.2-${{ runner.os }}-${{ hashFiles('scripts/build_ffmpeg_android.sh') }}
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
@@ -32,3 +40,134 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build optimized release APKs
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Verify arm64 release packaging and native alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARM64_APK="$(find app/build/outputs/apk -type f -name '*arm64-v8a*release*.apk' | head -n 1)"
+          if [ -z "$ARM64_APK" ]; then
+            echo "arm64-v8a release APK not found"
+            find app/build/outputs/apk -type f -maxdepth 5 -print || true
+            exit 1
+          fi
+
+          if ! unzip -Z1 "$ARM64_APK" | grep -qx 'lib/arm64-v8a/libcinestream_ffmpeg.so'; then
+            echo "Required CineStream FFmpeg JNI library missing"
+            unzip -Z1 "$ARM64_APK" | grep '^lib/arm64-v8a/' || true
+            exit 1
+          fi
+
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
+          if [ -z "$ZIPALIGN" ]; then
+            echo "zipalign not found"
+            exit 1
+          fi
+
+          "$ZIPALIGN" -c -P 16 -v 4 "$ARM64_APK"
+          ls -lh "$ARM64_APK"
+
+          NATIVE_DIR="$(mktemp -d)"
+          unzip -q "$ARM64_APK" 'lib/arm64-v8a/*.so' -d "$NATIVE_DIR"
+
+          python3 - "$NATIVE_DIR" <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          libraries = sorted(root.rglob('*.so'))
+          if not libraries:
+              raise SystemExit('No arm64 native libraries found in release APK')
+
+          cine = next((library for library in libraries if library.name == 'libcinestream_ffmpeg.so'), None)
+          if cine is None:
+              raise SystemExit('libcinestream_ffmpeg.so was not extracted from release APK')
+
+          dynamic = subprocess.check_output(
+              ['readelf', '-dW', str(cine)],
+              text=True,
+              errors='replace',
+          )
+          needed = []
+          for line in dynamic.splitlines():
+              match = re.search(r'\(NEEDED\).*Shared library: \[([^\]]+)\]', line)
+              if match:
+                  needed.append(match.group(1))
+          print('libcinestream_ffmpeg.so DT_NEEDED: ' + (', '.join(needed) if needed else '<none>'))
+
+          forbidden_prefixes = (
+              'libavcodec.so',
+              'libavutil.so',
+              'libavformat.so',
+              'libavfilter.so',
+              'libswscale.so',
+              'libswresample.so',
+          )
+          forbidden = sorted(
+              dependency
+              for dependency in needed
+              if dependency.startswith(forbidden_prefixes)
+          )
+          if forbidden:
+              raise SystemExit(
+                  'CineStream FFmpeg JNI library must statically contain FFmpeg; dynamic dependencies found: '
+                  + ', '.join(forbidden)
+              )
+
+          dynamic_symbols = subprocess.check_output(
+              ['nm', '-D', '--defined-only', str(cine)],
+              text=True,
+              errors='replace',
+          )
+          leaked_ffmpeg_symbols = []
+          for line in dynamic_symbols.splitlines():
+              fields = line.split()
+              if not fields:
+                  continue
+              symbol = fields[-1]
+              if symbol.startswith(('avcodec_', 'av_', 'avpriv_', 'ff_')):
+                  leaked_ffmpeg_symbols.append(symbol)
+          if leaked_ffmpeg_symbols:
+              raise SystemExit(
+                  'Statically linked FFmpeg symbols leaked from libcinestream_ffmpeg.so: '
+                  + ', '.join(sorted(leaked_ffmpeg_symbols)[:20])
+              )
+          print('FFmpeg archive symbols are private to libcinestream_ffmpeg.so')
+
+          bad = []
+          for library in libraries:
+              output = subprocess.check_output(
+                  ['readelf', '-lW', str(library)],
+                  text=True,
+                  errors='replace',
+              )
+              alignments = []
+              for line in output.splitlines():
+                  fields = line.split()
+                  if fields and fields[0] == 'LOAD':
+                      try:
+                          alignments.append(int(fields[-1], 16))
+                      except ValueError:
+                          pass
+              minimum = min(alignments) if alignments else 0
+              print(f'{library.name}: minimum LOAD alignment = 0x{minimum:x}')
+              if minimum < 0x4000:
+                  bad.append((library.name, minimum))
+
+          if bad:
+              details = ', '.join(f'{name}=0x{alignment:x}' for name, alignment in bad)
+              raise SystemExit('Native libraries below 16 KiB ELF alignment: ' + details)
+          PY
+
+      - name: Upload optimized arm64 release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinestream-arm64-release-unsigned
+          path: app/build/outputs/apk/**/*arm64-v8a*release*.apk
+          if-no-files-found: error
+          compression-level: 9

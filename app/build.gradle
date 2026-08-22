@@ -4,9 +4,15 @@ plugins {
     id 'com.android.application'
 }
 
+def cineFfmpegVersion = "8.1.2"
+def cineFfmpegRoot = file("${rootProject.projectDir}/.native/ffmpeg-${cineFfmpegVersion}")
+def cineFfmpegBuildScript = file("${rootProject.projectDir}/scripts/build_ffmpeg_android.sh")
+def cineFfmpegRootForCmake = cineFfmpegRoot.absolutePath.replace('\\', '/')
+
 android {
     namespace 'com.example.cinestream'
     compileSdk 35
+    ndkVersion "26.1.10909125"
 
     defaultConfig {
         applicationId "com.example.cinestream"
@@ -17,6 +23,14 @@ android {
         versionName "9.2"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DFFMPEG_ROOT=${cineFfmpegRootForCmake}"
+                cppFlags "-std=c++17"
+                abiFilters "arm64-v8a", "armeabi-v7a"
+            }
+        }
     }
 
     buildTypes {
@@ -34,6 +48,12 @@ android {
             universalApk false
         }
     }
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -43,7 +63,38 @@ android {
     }
 }
 
-def media3_version = "1.6.1"
+tasks.register('buildCineFfmpeg', Exec) {
+    group = 'build'
+    description = 'Builds CineStream minimal FFmpeg video decoder libraries for Android.'
+
+    inputs.file(cineFfmpegBuildScript)
+    outputs.files(
+            file("${cineFfmpegRoot}/arm64-v8a/libavcodec.a"),
+            file("${cineFfmpegRoot}/arm64-v8a/libavutil.a"),
+            file("${cineFfmpegRoot}/arm64-v8a/libswscale.a"),
+            file("${cineFfmpegRoot}/armeabi-v7a/libavcodec.a"),
+            file("${cineFfmpegRoot}/armeabi-v7a/libavutil.a"),
+            file("${cineFfmpegRoot}/armeabi-v7a/libswscale.a"),
+            file("${cineFfmpegRoot}/include/libavcodec/avcodec.h")
+    )
+
+    // Run Bash from the repository root and pass POSIX-style relative paths. Passing Windows
+    // absolute paths (C:\\...) directly to Git Bash causes backslashes to be consumed as escape
+    // characters, producing paths such as C:Users... and breaking local Windows builds.
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'scripts/build_ffmpeg_android.sh', ".native/ffmpeg-${cineFfmpegVersion}"
+}
+
+// Native configure/compile tasks require the generated FFmpeg headers and static libraries.
+tasks.configureEach { task ->
+    if (task.name == 'preBuild'
+            || task.name.startsWith('configureCMake')
+            || task.name.startsWith('buildCMake')) {
+        task.dependsOn tasks.named('buildCineFfmpeg')
+    }
+}
+
+def media3_version = "1.9.4"
 
 dependencies {
     // Kotlin Standard Library
@@ -54,14 +105,21 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.recyclerview:recyclerview:1.3.0'  // For RecyclerView
 
-    // Media3 + FFmpeg software decoder (E-AC-3)
+    // Media3 + FFmpeg software audio decoder. Keep the Media3 modules on one version line.
     implementation "androidx.media3:media3-exoplayer:$media3_version"
     implementation "androidx.media3:media3-exoplayer-hls:$media3_version"
     implementation "androidx.media3:media3-exoplayer-dash:$media3_version"
     implementation "androidx.media3:media3-exoplayer-smoothstreaming:$media3_version"
     implementation "androidx.media3:media3-common:$media3_version"
     implementation "androidx.media3:media3-ui:$media3_version"
-    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1" // <-- adds E-AC-3
+    implementation "androidx.media3:media3-inspector:$media3_version"
+    // Compatibility-copy fallback remains only for formats outside CineStream's native video set.
+    implementation "androidx.media3:media3-transformer:$media3_version"
+    implementation "androidx.media3:media3-effect:$media3_version"
+    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1"
+    // Native video extensions remain after MediaCodec: hardware first, software fallback only.
+    implementation files('libs/media3-decoder-av1-1.9.4.aar')
+    implementation files('libs/media3-decoder-vp9-1.9.4.aar')
     implementation 'com.github.wseemann:FFmpegMediaMetadataRetriever-core:1.0.21'
     implementation 'com.github.wseemann:FFmpegMediaMetadataRetriever-native:1.0.21'
     // Glide
