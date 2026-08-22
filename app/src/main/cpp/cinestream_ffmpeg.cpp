@@ -19,10 +19,15 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/frame.h>
 #include <libavutil/pixdesc.h>
+#include <libswscale/swscale.h>
 }
 
 #ifndef EGL_OPENGL_ES3_BIT_KHR
 #define EGL_OPENGL_ES3_BIT_KHR 0x00000040
+#endif
+
+#ifndef EGL_RECORDABLE_ANDROID
+#define EGL_RECORDABLE_ANDROID 0x3142
 #endif
 
 #define LOG_TAG "CineFFmpeg"
@@ -52,6 +57,7 @@ struct ProgramState {
 
 struct DecoderContext {
     AVCodecContext* codec = nullptr;
+    SwsContext* swsContext = nullptr;
     int rotationDegrees = 0;
     std::deque<PendingPacket> pendingPackets;
     std::mutex frameMutex;
@@ -65,7 +71,10 @@ struct DecoderContext {
     EGLContext eglContext = EGL_NO_CONTEXT;
     EGLSurface eglSurface = EGL_NO_SURFACE;
     EGLConfig eglConfig = nullptr;
+    PFNEGLPRESENTATIONTIMEANDROIDPROC presentationTimeAndroid = nullptr;
     ANativeWindow* nativeWindow = nullptr;
+    int windowWidth = 0;
+    int windowHeight = 0;
 
     ProgramState program8;
     ProgramState program10;
@@ -290,6 +299,9 @@ bool initializeEglContext(DecoderContext* context) {
     const EGLint configAttributes[] = {
             EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
             EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
+            // Decoder frames are rendered into a Media3/MediaCodec-owned Surface. Android may
+            // accept a non-recordable EGL config but then deliver cleared (black) buffers.
+            EGL_RECORDABLE_ANDROID, EGL_TRUE,
             EGL_RED_SIZE, 8,
             EGL_GREEN_SIZE, 8,
             EGL_BLUE_SIZE, 8,
@@ -355,7 +367,13 @@ bool initializeGlObjects(DecoderContext* context) {
     return glGetError() == GL_NO_ERROR;
 }
 
-bool ensureSurface(JNIEnv* env, DecoderContext* context, jobject surface) {
+bool ensureSurface(
+        JNIEnv* env,
+        DecoderContext* context,
+        jobject surface,
+        int requestedWidth,
+        int requestedHeight
+) {
     if (surface == nullptr || !initializeEglContext(context)) {
         return false;
     }
@@ -366,9 +384,26 @@ bool ensureSurface(JNIEnv* env, DecoderContext* context, jobject surface) {
         return false;
     }
 
-    if (context->nativeWindow != newWindow) {
+    bool needsNewSurface = context->nativeWindow != newWindow
+            || context->windowWidth != requestedWidth
+            || context->windowHeight != requestedHeight;
+    if (needsNewSurface) {
         destroyEglSurface(context);
         context->nativeWindow = newWindow;
+        int geometryResult = ANativeWindow_setBuffersGeometry(
+                context->nativeWindow,
+                requestedWidth,
+                requestedHeight,
+                0
+        );
+        if (geometryResult != 0) {
+            LOGW(
+                    "ANativeWindow_setBuffersGeometry(%dx%d) failed: %d",
+                    requestedWidth,
+                    requestedHeight,
+                    geometryResult
+            );
+        }
         context->eglSurface = eglCreateWindowSurface(
                 context->eglDisplay,
                 context->eglConfig,
@@ -380,6 +415,8 @@ bool ensureSurface(JNIEnv* env, DecoderContext* context, jobject surface) {
             destroyEglSurface(context);
             return false;
         }
+        context->windowWidth = requestedWidth;
+        context->windowHeight = requestedHeight;
     } else {
         ANativeWindow_release(newWindow);
     }
@@ -494,35 +531,107 @@ int normalizedRotation(int degrees) {
     return 0;
 }
 
-bool renderFrame(DecoderContext* context, const AVFrame* frame) {
-    AVPixelFormat pixelFormat = static_cast<AVPixelFormat>(frame->format);
+AVFrame* convertFrameForRendering(DecoderContext* context, const AVFrame* source) {
+    AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
+    const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(sourceFormat);
+    if (descriptor == nullptr || (descriptor->flags & AV_PIX_FMT_FLAG_HWACCEL) != 0) {
+        return nullptr;
+    }
+
+    int sourceBitDepth = descriptor->comp[0].depth;
+    AVPixelFormat targetFormat = sourceBitDepth > 8
+            ? AV_PIX_FMT_YUV420P10LE
+            : AV_PIX_FMT_YUV420P;
+    context->swsContext = sws_getCachedContext(
+            context->swsContext,
+            source->width,
+            source->height,
+            sourceFormat,
+            source->width,
+            source->height,
+            targetFormat,
+            SWS_BILINEAR,
+            nullptr,
+            nullptr,
+            nullptr
+    );
+    if (context->swsContext == nullptr) {
+        return nullptr;
+    }
+
+    AVFrame* converted = av_frame_alloc();
+    if (converted == nullptr) {
+        return nullptr;
+    }
+    converted->format = targetFormat;
+    converted->width = source->width;
+    converted->height = source->height;
+    if (av_frame_copy_props(converted, source) < 0
+            || av_frame_get_buffer(converted, 32) < 0
+            || av_frame_make_writable(converted) < 0) {
+        av_frame_free(&converted);
+        return nullptr;
+    }
+
+    int scaledHeight = sws_scale(
+            context->swsContext,
+            source->data,
+            source->linesize,
+            0,
+            source->height,
+            converted->data,
+            converted->linesize
+    );
+    if (scaledHeight != source->height) {
+        av_frame_free(&converted);
+        return nullptr;
+    }
+    return converted;
+}
+
+bool renderFrame(
+        DecoderContext* context,
+        const AVFrame* frame,
+        int64_t presentationTimeUs
+) {
+    AVFrame* convertedFrame = nullptr;
+    const AVFrame* renderableFrame = frame;
+    AVPixelFormat pixelFormat = static_cast<AVPixelFormat>(renderableFrame->format);
     int bitDepth = 0;
     if (pixelFormat == AV_PIX_FMT_YUV420P || pixelFormat == AV_PIX_FMT_YUVJ420P) {
         bitDepth = 8;
     } else if (pixelFormat == AV_PIX_FMT_YUV420P10LE) {
         bitDepth = 10;
     } else {
-        const char* name = av_get_pix_fmt_name(pixelFormat);
-        LOGE("Unsupported FFmpeg output pixel format: %s", name != nullptr ? name : "unknown");
-        return false;
+        convertedFrame = convertFrameForRendering(context, frame);
+        if (convertedFrame == nullptr) {
+            const char* name = av_get_pix_fmt_name(pixelFormat);
+            LOGE("Unable to convert FFmpeg output pixel format: %s",
+                 name != nullptr ? name : "unknown");
+            return false;
+        }
+        renderableFrame = convertedFrame;
+        pixelFormat = static_cast<AVPixelFormat>(renderableFrame->format);
+        bitDepth = pixelFormat == AV_PIX_FMT_YUV420P10LE ? 10 : 8;
     }
 
-    int chromaWidth = (frame->width + 1) / 2;
-    int chromaHeight = (frame->height + 1) / 2;
-    const int widths[3] = {frame->width, chromaWidth, chromaWidth};
-    const int heights[3] = {frame->height, chromaHeight, chromaHeight};
+    int chromaWidth = (renderableFrame->width + 1) / 2;
+    int chromaHeight = (renderableFrame->height + 1) / 2;
+    const int widths[3] = {renderableFrame->width, chromaWidth, chromaWidth};
+    const int heights[3] = {renderableFrame->height, chromaHeight, chromaHeight};
 
     for (int i = 0; i < 3; i++) {
         glActiveTexture(GL_TEXTURE0 + i);
         if (!uploadPlane(
                 context->textures[i],
-                frame->data[i],
+                renderableFrame->data[i],
                 widths[i],
                 heights[i],
-                frame->linesize[i],
+                renderableFrame->linesize[i],
                 bitDepth
         )) {
             LOGE("Unable to upload YUV plane %d", i);
+            av_frame_free(&convertedFrame);
             return false;
         }
     }
@@ -537,7 +646,7 @@ bool renderFrame(DecoderContext* context, const AVFrame* frame) {
     glUseProgram(program.id);
     const float* matrix = nullptr;
     float offsets[3] = {0.0f, 0.0f, 0.0f};
-    chooseColorConversion(frame, bitDepth, &matrix, offsets);
+    chooseColorConversion(renderableFrame, bitDepth, &matrix, offsets);
     glUniformMatrix3fv(program.colorMatrix, 1, GL_FALSE, matrix);
     glUniform3fv(program.offsets, 1, offsets);
     glUniform1i(program.rotation, normalizedRotation(context->rotationDegrees));
@@ -560,14 +669,32 @@ bool renderFrame(DecoderContext* context, const AVFrame* frame) {
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     if (glGetError() != GL_NO_ERROR) {
         LOGE("OpenGL error while drawing FFmpeg frame");
+        av_frame_free(&convertedFrame);
         return false;
     }
 
+    if (presentationTimeUs >= 0 && context->presentationTimeAndroid == nullptr) {
+        context->presentationTimeAndroid =
+                reinterpret_cast<PFNEGLPRESENTATIONTIMEANDROIDPROC>(
+                        eglGetProcAddress("eglPresentationTimeANDROID")
+                );
+    }
+    if (presentationTimeUs >= 0
+            && context->presentationTimeAndroid != nullptr
+            && !context->presentationTimeAndroid(
+                    context->eglDisplay,
+                    context->eglSurface,
+                    presentationTimeUs * 1000
+            )) {
+        LOGW("eglPresentationTimeANDROID failed: 0x%x", eglGetError());
+    }
     if (!eglSwapBuffers(context->eglDisplay, context->eglSurface)) {
         LOGE("eglSwapBuffers failed: 0x%x", eglGetError());
         destroyEglSurface(context);
+        av_frame_free(&convertedFrame);
         return false;
     }
+    av_frame_free(&convertedFrame);
     return true;
 }
 
@@ -664,6 +791,10 @@ void releaseContext(DecoderContext* context) {
     if (context->codec != nullptr) {
         avcodec_free_context(&context->codec);
     }
+    if (context->swsContext != nullptr) {
+        sws_freeContext(context->swsContext);
+        context->swsContext = nullptr;
+    }
     delete context;
 }
 
@@ -706,7 +837,8 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
         jint threads,
         jint rotationDegrees,
         jint width,
-        jint height
+        jint height,
+        jboolean discardNonReferenceFrames
 ) {
     std::string name = jstringToString(env, codecName);
     const AVCodec* codec = avcodec_find_decoder_by_name(name.c_str());
@@ -725,6 +857,9 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
     context->rotationDegrees = rotationDegrees;
     context->codec->thread_count = std::max(1, static_cast<int>(threads));
     context->codec->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    if (discardNonReferenceFrames == JNI_TRUE) {
+        context->codec->skip_frame = AVDISCARD_NONREF;
+    }
     context->codec->pkt_timebase = AVRational{1, 1000000};
     if (width > 0) context->codec->width = width;
     if (height > 0) context->codec->height = height;
@@ -781,7 +916,12 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
         return 0L;
     }
 
-    LOGI("Initialized FFmpeg %s decoder, threads=%d", name.c_str(), context->codec->thread_count);
+    LOGI(
+            "Initialized FFmpeg %s decoder, threads=%d, discardNonRef=%d",
+            name.c_str(),
+            context->codec->thread_count,
+            discardNonReferenceFrames == JNI_TRUE ? 1 : 0
+    );
     return reinterpret_cast<jlong>(context);
 }
 
@@ -971,7 +1111,10 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeRenderFrame(
         jclass,
         jlong nativeContext,
         jlong nativeFrame,
-        jobject surface
+        jobject surface,
+        jlong presentationTimeUs,
+        jint outputWidth,
+        jint outputHeight
 ) {
     auto* context = reinterpret_cast<DecoderContext*>(nativeContext);
     auto* frame = reinterpret_cast<AVFrame*>(nativeFrame);
@@ -986,10 +1129,12 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeRenderFrame(
         }
     }
 
-    if (!ensureSurface(env, context, surface)) {
+    int renderWidth = outputWidth > 0 ? outputWidth : frame->width;
+    int renderHeight = outputHeight > 0 ? outputHeight : frame->height;
+    if (!ensureSurface(env, context, surface, renderWidth, renderHeight)) {
         return RESULT_ERROR;
     }
-    return renderFrame(context, frame) ? RESULT_FRAME : RESULT_ERROR;
+    return renderFrame(context, frame, presentationTimeUs) ? RESULT_FRAME : RESULT_ERROR;
 }
 
 extern "C" JNIEXPORT void JNICALL

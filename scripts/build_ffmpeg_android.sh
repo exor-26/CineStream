@@ -4,7 +4,7 @@ set -euo pipefail
 FFMPEG_VERSION="8.1.2"
 ANDROID_API="24"
 PINNED_NDK_VERSION="26.1.10909125"
-OUTPUT_ROOT="${1:?Usage: build_ffmpeg_android.sh <output-root>}"
+OUTPUT_ROOT_INPUT="${1:?Usage: build_ffmpeg_android.sh <output-root>}"
 
 case "$(uname -s)" in
   Linux*) HOST_TAG="linux-x86_64" ;;
@@ -12,6 +12,10 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) HOST_TAG="windows-x86_64" ;;
   *) echo "Unsupported build host: $(uname -s)" >&2; exit 1 ;;
 esac
+
+# Build steps change into ABI-specific directories, so keep every generated path absolute.
+mkdir -p "${OUTPUT_ROOT_INPUT}"
+OUTPUT_ROOT="$(cd "${OUTPUT_ROOT_INPUT}" && pwd)"
 
 SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [[ -z "${SDK_ROOT}" && "${HOST_TAG}" == "windows-x86_64" && -n "${LOCALAPPDATA:-}" ]]; then
@@ -80,7 +84,18 @@ if [[ ! -f "${SOURCE_DIR}/configure" ]]; then
 fi
 
 JOBS="${CINESTREAM_NATIVE_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+MAKE_COMMAND="${CINESTREAM_MAKE_COMMAND:-make}"
+if ! command -v "${MAKE_COMMAND}" >/dev/null 2>&1; then
+  if [[ "${HOST_TAG}" == "windows-x86_64" && -x "/c/mingw64/bin/mingw32-make.exe" ]]; then
+    MAKE_COMMAND="/c/mingw64/bin/mingw32-make.exe"
+  else
+    echo "GNU Make was not found. Set CINESTREAM_MAKE_COMMAND to its executable." >&2
+    exit 1
+  fi
+fi
+
 DECODERS=(
+  av1
   h264
   hevc
   mpeg4
@@ -92,6 +107,8 @@ DECODERS=(
   h263
   flv
   mjpeg
+  vp8
+  vp9
 )
 
 COMMON_DECODER_FLAGS=()
@@ -127,7 +144,10 @@ build_abi() {
   local build_dir="${WORK_ROOT}/build-${abi}-static"
   local install_dir="${WORK_ROOT}/install-${abi}-static"
 
-  if [[ -f "${marker}" && -f "${final_dir}/libavcodec.a" && -f "${final_dir}/libavutil.a" ]]; then
+  if [[ -f "${marker}" \
+      && -f "${final_dir}/libavcodec.a" \
+      && -f "${final_dir}/libavutil.a" \
+      && -f "${final_dir}/libswscale.a" ]]; then
     if stage_headers "${install_dir}"; then
       echo "FFmpeg ${FFMPEG_VERSION} static libraries already built for ${abi}."
       return
@@ -138,26 +158,62 @@ build_abi() {
   rm -rf "${build_dir}" "${install_dir}" "${final_dir}"
   mkdir -p "${build_dir}" "${install_dir}" "${final_dir}"
 
+  # Keep Windows source paths relative. Absolute MSYS /c/... paths are not understood by native
+  # MinGW Make, while in-tree builds make FFmpeg's .S inputs collide with generated .s files on
+  # case-insensitive NTFS.
+  local configure_script="${SOURCE_DIR}/configure"
+  if [[ "${HOST_TAG}" == "windows-x86_64" ]]; then
+    configure_script="../ffmpeg-${FFMPEG_VERSION}/configure"
+  fi
+
   local cc="${TOOLCHAIN}/bin/${compiler_prefix}${ANDROID_API}-clang"
+  local cxx="${TOOLCHAIN}/bin/${compiler_prefix}${ANDROID_API}-clang++"
   if [[ ! -x "${cc}" && -f "${cc}.cmd" ]]; then
     cc="${cc}.cmd"
+  fi
+  if [[ ! -x "${cxx}" && -f "${cxx}.cmd" ]]; then
+    cxx="${cxx}.cmd"
   fi
   if [[ ! -e "${cc}" ]]; then
     echo "Android compiler not found: ${cc}" >&2
     exit 1
   fi
+  if [[ ! -e "${cxx}" ]]; then
+    echo "Android C++ compiler not found: ${cxx}" >&2
+    exit 1
+  fi
+
+  local configure_source_dir="${SOURCE_DIR}"
+  local configure_install_dir="${install_dir}"
+  local configure_cc="${cc}"
+  local configure_cxx="${cxx}"
+  local configure_ar="${TOOLCHAIN}/bin/llvm-ar"
+  local configure_ranlib="${TOOLCHAIN}/bin/llvm-ranlib"
+  local configure_strip="${TOOLCHAIN}/bin/llvm-strip"
+  if [[ "${HOST_TAG}" == "windows-x86_64" ]] && command -v cygpath >/dev/null 2>&1; then
+    # Use relative source/install paths so MinGW Make never parses a drive-letter colon as a
+    # Make path separator. Compiler tool paths remain native Windows paths.
+    configure_source_dir="../ffmpeg-${FFMPEG_VERSION}"
+    configure_install_dir="../install-${abi}-static"
+    configure_cc="$(cygpath -m "${cc}")"
+    configure_cxx="$(cygpath -m "${cxx}")"
+    configure_ar="$(cygpath -m "${configure_ar}")"
+    configure_ranlib="$(cygpath -m "${configure_ranlib}")"
+    configure_strip="$(cygpath -m "${configure_strip}")"
+  fi
 
   pushd "${build_dir}" >/dev/null
-  "${SOURCE_DIR}/configure" \
-    --prefix="${install_dir}" \
+  "${configure_script}" \
+    --prefix="${configure_install_dir}" \
     --target-os=android \
     --arch="${arch}" \
     --cpu="${cpu}" \
     --enable-cross-compile \
-    --cc="${cc}" \
-    --ar="${TOOLCHAIN}/bin/llvm-ar" \
-    --ranlib="${TOOLCHAIN}/bin/llvm-ranlib" \
-    --strip="${TOOLCHAIN}/bin/llvm-strip" \
+    --cc="${configure_cc}" \
+    --cxx="${configure_cxx}" \
+    --ar="${configure_ar}" \
+    --ranlib="${configure_ranlib}" \
+    --strip="${configure_strip}" \
     --disable-shared \
     --enable-static \
     --enable-pic \
@@ -173,15 +229,27 @@ build_abi() {
     --disable-everything \
     --enable-avcodec \
     --enable-avutil \
+    --enable-swscale \
     --extra-cflags="-O3 -fPIC -ffunction-sections -fdata-sections" \
     "${COMMON_DECODER_FLAGS[@]}"
 
-  make -j"${JOBS}"
-  make install
+  if [[ "${HOST_TAG}" == "windows-x86_64" ]]; then
+    # FFmpeg canonicalizes the relative source directory back to /c/... during configure.
+    # Restore the relative sibling path for native MinGW Make after all feature probes finish.
+    sed -i "1cinclude ${configure_source_dir}/Makefile" Makefile
+    sed -i \
+      -e "s|^SRC_PATH=.*$|SRC_PATH=${configure_source_dir}|" \
+      -e "s|^SRC_LINK=.*$|SRC_LINK=${configure_source_dir}|" \
+      ffbuild/config.mak
+  fi
+
+  "${MAKE_COMMAND}" -j"${JOBS}"
+  "${MAKE_COMMAND}" install
   popd >/dev/null
 
   cp "${install_dir}/lib/libavcodec.a" "${final_dir}/libavcodec.a"
   cp "${install_dir}/lib/libavutil.a" "${final_dir}/libavutil.a"
+  cp "${install_dir}/lib/libswscale.a" "${final_dir}/libswscale.a"
 
   if ! stage_headers "${install_dir}"; then
     echo "FFmpeg public headers were not staged correctly from ${install_dir}/include." >&2

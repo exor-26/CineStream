@@ -64,6 +64,16 @@ final class CompatibilityVideoPolicy {
         return new int[]{width, height};
     }
 
+    static boolean isLowerFrameRateVariant(Target current, Target next) {
+        return current != null
+                && next != null
+                && current.width == next.width
+                && current.height == next.height
+                && current.frameRate > 31f
+                && next.frameRate > 0f
+                && next.frameRate <= 31f;
+    }
+
     private static int evenAtLeastTwo(int value) {
         int safe = Math.max(2, value);
         return (safe & 1) == 0 ? safe : safe - 1;

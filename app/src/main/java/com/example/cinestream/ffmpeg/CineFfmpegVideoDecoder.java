@@ -64,12 +64,56 @@ final class CineFfmpegVideoDecoder implements
             int threads,
             Format format
     ) throws CineFfmpegDecoderException {
+        this(
+                numInputBuffers,
+                numOutputBuffers,
+                initialInputBufferSize,
+                threads,
+                format,
+                false,
+                false
+        );
+    }
+
+    CineFfmpegVideoDecoder(
+            int numInputBuffers,
+            int numOutputBuffers,
+            int initialInputBufferSize,
+            int threads,
+            Format format,
+            boolean transformerInput
+    ) throws CineFfmpegDecoderException {
+        this(
+                numInputBuffers,
+                numOutputBuffers,
+                initialInputBufferSize,
+                threads,
+                format,
+                transformerInput,
+                false
+        );
+    }
+
+    CineFfmpegVideoDecoder(
+            int numInputBuffers,
+            int numOutputBuffers,
+            int initialInputBufferSize,
+            int threads,
+            Format format,
+            boolean transformerInput,
+            boolean discardNonReferenceFrames
+    ) throws CineFfmpegDecoderException {
         if (!CineFfmpegLibrary.isAvailable()) {
             throw new CineFfmpegDecoderException("CineStream FFmpeg native library is unavailable.");
         }
 
-        codecName = CineFfmpegLibrary.codecNameForMimeType(format.sampleMimeType);
-        if (codecName == null || !CineFfmpegLibrary.supportsMimeType(format.sampleMimeType)) {
+        codecName = transformerInput
+                ? CineFfmpegLibrary.codecNameForTransformerMimeType(format.sampleMimeType)
+                : CineFfmpegLibrary.codecNameForMimeType(format.sampleMimeType);
+        boolean supported = transformerInput
+                ? CineFfmpegLibrary.supportsTransformerMimeType(format.sampleMimeType)
+                : CineFfmpegLibrary.supportsMimeType(format.sampleMimeType);
+        if (codecName == null || !supported) {
             throw new CineFfmpegDecoderException(
                     "No bundled FFmpeg video decoder for " + format.sampleMimeType
             );
@@ -82,7 +126,8 @@ final class CineFfmpegVideoDecoder implements
                 threads,
                 format.rotationDegrees,
                 format.width,
-                format.height
+                format.height,
+                discardNonReferenceFrames
         );
         if (nativeContext == 0L) {
             throw new CineFfmpegDecoderException("Unable to initialize FFmpeg decoder " + codecName);
@@ -253,12 +298,44 @@ final class CineFfmpegVideoDecoder implements
 
     void renderToSurface(VideoDecoderOutputBuffer outputBuffer, Surface surface)
             throws CineFfmpegDecoderException {
+        renderToSurface(outputBuffer, surface, outputBuffer.timeUs);
+    }
+
+    void renderToSurface(
+            VideoDecoderOutputBuffer outputBuffer,
+            Surface surface,
+            long presentationTimeUs
+    ) throws CineFfmpegDecoderException {
+        renderToSurface(
+                outputBuffer,
+                surface,
+                presentationTimeUs,
+                outputBuffer.width,
+                outputBuffer.height
+        );
+    }
+
+    void renderToSurface(
+            VideoDecoderOutputBuffer outputBuffer,
+            Surface surface,
+            long presentationTimeUs,
+            int outputWidth,
+            int outputHeight
+    ) throws CineFfmpegDecoderException {
         long context = nativeContext;
         long frame = outputBuffer.decoderPrivate;
         if (context == 0L || frame == 0L) {
             throw new CineFfmpegDecoderException("FFmpeg output buffer has no native frame.");
         }
-        if (nativeRenderFrame(context, frame, surface) != NATIVE_RESULT_FRAME) {
+        if (nativeRenderFrame(
+                context,
+                frame,
+                surface,
+                presentationTimeUs,
+                outputWidth,
+                outputHeight
+        )
+                != NATIVE_RESULT_FRAME) {
             throw new CineFfmpegDecoderException("Unable to render FFmpeg frame to Surface.");
         }
     }
@@ -612,7 +689,8 @@ final class CineFfmpegVideoDecoder implements
             int threads,
             int rotationDegrees,
             int width,
-            int height
+            int height,
+            boolean discardNonReferenceFrames
     );
 
     private static native int nativeDecodePacket(
@@ -630,7 +708,14 @@ final class CineFfmpegVideoDecoder implements
 
     private static native int nativeFlush(long context);
 
-    private static native int nativeRenderFrame(long context, long frame, Surface surface);
+    private static native int nativeRenderFrame(
+            long context,
+            long frame,
+            Surface surface,
+            long presentationTimeUs,
+            int outputWidth,
+            int outputHeight
+    );
 
     private static native void nativeReleaseFrame(long context, long frame);
 

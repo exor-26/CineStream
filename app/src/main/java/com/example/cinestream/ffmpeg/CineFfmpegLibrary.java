@@ -43,6 +43,12 @@ public final class CineFfmpegLibrary {
         return codecName != null && isAvailable() && nativeHasDecoder(codecName);
     }
 
+    /** Includes codecs used only as offline Transformer inputs. */
+    public static boolean supportsTransformerMimeType(@Nullable String mimeType) {
+        String codecName = codecNameForTransformerMimeType(mimeType);
+        return codecName != null && isAvailable() && nativeHasDecoder(codecName);
+    }
+
     @Nullable
     static String codecNameForMimeType(@Nullable String mimeType) {
         if (mimeType == null) {
@@ -59,8 +65,26 @@ public final class CineFfmpegLibrary {
             case MimeTypes.VIDEO_H263 -> "h263";
             case MimeTypes.VIDEO_FLV -> "flv";
             case MimeTypes.VIDEO_MJPEG -> "mjpeg";
+            case MimeTypes.VIDEO_VP8 -> "vp8";
             default -> null;
         };
+    }
+
+    @Nullable
+    static String codecNameForTransformerMimeType(@Nullable String mimeType) {
+        // Media3 exposes dvhe/dvh1 samples as video/dolby-vision rather than video/hevc. Devices
+        // without a Dolby Vision MediaCodec therefore leave the track unselected. FFmpeg can still
+        // decode the HEVC base layer for offline compatibility conversion.
+        if (MimeTypes.VIDEO_DOLBY_VISION.equals(mimeType)) {
+            return "hevc";
+        }
+        if (MimeTypes.VIDEO_AV1.equals(mimeType)) {
+            return "av1";
+        }
+        if (MimeTypes.VIDEO_VP9.equals(mimeType)) {
+            return "vp9";
+        }
+        return codecNameForMimeType(mimeType);
     }
 
     @Nullable

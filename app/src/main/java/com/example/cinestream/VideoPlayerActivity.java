@@ -50,6 +50,8 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
+import com.example.cinestream.ffmpeg.CineFfmpegLibrary;
+
 import java.io.File;
 import java.util.Arrays;
 import java.util.List;
@@ -505,7 +507,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     "Retrying with bundled software video renderer for "
                             + (failedVideo != null ? failedVideo.sampleMimeType : "video")
                             + " at " + position + " ms");
-            GlassUi.showToast(this, "Switching to compatibility video decoder…");
             rebuildPlayerPreservingCompatibility(items, itemIndex, position, playWhenReady);
             return;
         }
@@ -519,14 +520,20 @@ public class VideoPlayerActivity extends AppCompatActivity {
             currentVideoAssessment = assessment;
         }
 
+        boolean canCreateCompatibilityVideo = assessment != null
+                && (assessment.support
+                == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY
+                || (assessment.support == DeviceVideoCapabilities.Support.NO_PLATFORM_DECODER
+                && CineFfmpegLibrary.supportsTransformerMimeType(failedVideo != null
+                ? failedVideo.sampleMimeType
+                : null)));
+
         if (!compatibilityTranscodeAttempted
                 && PlaybackEnginePolicy.isVideoDecoderFailure(error)
                 && failedVideo != null
                 && failedVideo.width > 0
                 && failedVideo.height > 0
-                && assessment != null
-                && assessment.support
-                == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY) {
+                && canCreateCompatibilityVideo) {
             compatibilityTranscodeAttempted = true;
             startCompatibilityRecovery(failedVideo);
             return;
@@ -599,7 +606,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         final boolean recoveryPlayWhenReady = playWhenReady;
 
         releasePlayerOnly();
-        GlassUi.showToast(this, "Preparing a compatible video for this device…");
         compatibilityTranscodeSession = CompatibilityVideoTranscoder.start(
                 this,
                 sourceUri,
@@ -626,13 +632,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
                         Log.i("VideoCompatibility",
                                 (fromCache ? "Using cached " : "Created ")
                                         + "H.264 compatibility video " + target);
-                        GlassUi.showToast(
-                                VideoPlayerActivity.this,
-                                "Playing compatible " + target.width + "×" + target.height
-                                        + (target.frameRate > 0f
-                                        ? " • " + Math.round(target.frameRate) + " fps"
-                                        : "")
-                        );
                         createPlayerWithCompatibilityVideo(
                                 recoveryItems,
                                 recoveryIndex,
@@ -667,6 +666,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
         if (tracks == null) {
             return;
         }
+        Format recoverableUnselectedVideo = null;
+        int recoverableTrackSupport = C.FORMAT_UNSUPPORTED_TYPE;
         for (Tracks.Group group : tracks.getGroups()) {
             if (group.getType() != C.TRACK_TYPE_VIDEO) {
                 continue;
@@ -674,6 +675,14 @@ public class VideoPlayerActivity extends AppCompatActivity {
             TrackGroup mediaTrackGroup = group.getMediaTrackGroup();
             for (int i = 0; i < group.length; i++) {
                 if (!group.isTrackSelected(i)) {
+                    Format format = mediaTrackGroup.getFormat(i);
+                    if (recoverableUnselectedVideo == null
+                            && !group.isTrackSupported(i, true)
+                            && CineFfmpegLibrary.supportsTransformerMimeType(
+                            format.sampleMimeType)) {
+                        recoverableUnselectedVideo = format;
+                        recoverableTrackSupport = group.getTrackSupport(i);
+                    }
                     continue;
                 }
                 Format format = mediaTrackGroup.getFormat(i);
@@ -697,6 +706,45 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 return;
             }
         }
+
+        if (recoverableUnselectedVideo != null) {
+            startCompatibilityForUnselectedVideo(
+                    recoverableUnselectedVideo,
+                    recoverableTrackSupport
+            );
+        }
+    }
+
+    private void startCompatibilityForUnselectedVideo(Format format, int trackSupport) {
+        currentVideoAssessment = DeviceVideoCapabilities.assess(format);
+        Log.w("VideoCapability",
+                "No video track was selected; routing through compatibility conversion."
+                        + " mime=" + format.sampleMimeType
+                        + " codecs=" + format.codecs
+                        + " size=" + format.width + "x" + format.height
+                        + " fps=" + format.frameRate
+                        + " trackSupport=" + trackSupport
+                        + " platformSupport=" + currentVideoAssessment.support);
+
+        if (compatibilityTranscodeAttempted
+                || format.width <= 0
+                || format.height <= 0) {
+            return;
+        }
+
+        compatibilityTranscodeAttempted = true;
+        String recoveryPlaybackKey = playbackKey;
+        uiHandler.post(() -> {
+            if (isFinishing()
+                    || isDestroyed()
+                    || exoPlayer == null
+                    || compatibilityTranscodeSession != null
+                    || recoveryPlaybackKey == null
+                    || !recoveryPlaybackKey.equals(playbackKey)) {
+                return;
+            }
+            startCompatibilityRecovery(format);
+        });
     }
 
     private void savePositionInfo(Player.PositionInfo positionInfo) {

@@ -117,6 +117,8 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
         // ── Thumbnail + Palette tint ─────────────────────────────────
         CustomTarget<Bitmap> target = new CustomTarget<Bitmap>() {
+            private boolean compatibilityCacheAttempted;
+
             @Override
             public void onResourceReady(@NonNull Bitmap resource,
                                         Transition<? super Bitmap> transition) {
@@ -154,10 +156,47 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                     applyCachedTint(holder, playbackKey);
                 }
             }
+
+            @Override
+            public void onLoadFailed(android.graphics.drawable.Drawable errorDrawable) {
+                if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                    return;
+                }
+                holder.videoThumbnail.setImageDrawable(errorDrawable);
+                applyCachedTint(holder, playbackKey);
+                if (compatibilityCacheAttempted) {
+                    return;
+                }
+                compatibilityCacheAttempted = true;
+
+                Context appContext = context.getApplicationContext();
+                EXECUTOR.execute(() -> {
+                    java.io.File cachedVideo =
+                            CompatibilityVideoTranscoder.findCachedVideoForThumbnail(
+                                    appContext,
+                                    videoUri
+                            );
+                    MAIN_HANDLER.post(() -> {
+                        if (cachedVideo == null
+                                || !playbackKey.equals(holder.boundPlaybackKey)
+                                || holder.thumbnailTarget != this) {
+                            return;
+                        }
+                        Glide.with(holder.itemView)
+                                .asBitmap()
+                                .load(cachedVideo)
+                                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                .override(336, 216)
+                                .centerCrop()
+                                .placeholder(R.drawable.ic_video_placeholder)
+                                .into(this);
+                    });
+                });
+            }
         };
         holder.thumbnailTarget = target;
 
-        Glide.with(context)
+        Glide.with(holder.itemView)
                 .asBitmap()
                 .load(videoUri)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
@@ -255,7 +294,8 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             holder.videoDuration.setText(formatDuration(indexed.durationMs));
         }
         if (indexed.hasResolution()) {
-            holder.videoQuality.setText(getQualityLabel(indexed.width, indexed.height));
+            holder.videoQuality.setText(
+                    VideoQualityLabels.forDimensions(indexed.width, indexed.height));
         }
         return indexed.hasDuration() && indexed.hasResolution();
     }
@@ -587,7 +627,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             // Resolution + quality
             if (width > 0 && height > 0) {
                 snapshot.resolutionLabel = String.format(Locale.US, "%d x %d", width, height);
-                snapshot.qualityLabel    = getQualityLabel(width, height);
+                snapshot.qualityLabel    = VideoQualityLabels.forDimensions(width, height);
             }
 
         } catch (Exception e) {
@@ -915,18 +955,6 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                         ? mime.substring(mime.indexOf('/') + 1) : mime;
                 return n.toUpperCase(Locale.US);
         }
-    }
-
-    private String getQualityLabel(int w, int h) {
-        int d = Math.max(w, h);
-        if (d >= 3840) return "4K";
-        if (d >= 2560) return "2K";
-        if (d >= 1920) return "1080p";
-        if (d >= 1280) return "720p";
-        if (d >= 854)  return "480p";
-        if (d >= 640)  return "360p";
-        if (d >= 426)  return "240p";
-        return "144p";
     }
 
     // ── Share ────────────────────────────────────────────────────────

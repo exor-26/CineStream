@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(FFMPEG_ABI_ROOT "${FFMPEG_ROOT}/${ANDROID_ABI}")
 set(FFMPEG_INCLUDE_ROOT "${FFMPEG_ROOT}/include")
 
-foreach(FFMPEG_LIB avcodec avutil)
+foreach(FFMPEG_LIB avcodec avutil swscale)
     add_library(${FFMPEG_LIB} STATIC IMPORTED)
     set_target_properties(${FFMPEG_LIB} PROPERTIES
         IMPORTED_LOCATION "${FFMPEG_ABI_ROOT}/lib${FFMPEG_LIB}.a"
@@ -45,6 +45,7 @@ find_library(dl-lib dl)
 target_link_libraries(cinestream_ffmpeg
     avcodec
     avutil
+    swscale
     ${m-lib}
     ${dl-lib}
     ${log-lib}

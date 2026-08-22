@@ -6,6 +6,7 @@ import android.os.Build;
 
 import androidx.media3.common.Format;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -144,13 +145,31 @@ public final class DeviceVideoCapabilities {
             int sourceHeight,
             float sourceFrameRate
     ) {
+        List<CompatibilityVideoPolicy.Target> targets = chooseH264CompatibilityTargets(
+                sourceWidth,
+                sourceHeight,
+                sourceFrameRate
+        );
+        return targets.isEmpty() ? null : targets.get(0);
+    }
+
+    /**
+     * Returns all device-supported H.264 targets in recovery order. Hardware-backed targets are
+     * tried before platform-software targets, and quality order is preserved within each group.
+     */
+    static List<CompatibilityVideoPolicy.Target> chooseH264CompatibilityTargets(
+            int sourceWidth,
+            int sourceHeight,
+            float sourceFrameRate
+    ) {
         List<CompatibilityVideoPolicy.Target> candidates =
                 CompatibilityVideoPolicy.buildCandidates(
                         sourceWidth,
                         sourceHeight,
                         sourceFrameRate
                 );
-        CompatibilityVideoPolicy.Target softwareTarget = null;
+        List<CompatibilityVideoPolicy.Target> hardwareTargets = new ArrayList<>();
+        List<CompatibilityVideoPolicy.Target> softwareTargets = new ArrayList<>();
         for (CompatibilityVideoPolicy.Target target : candidates) {
             Format targetFormat = new Format.Builder()
                     .setSampleMimeType("video/avc")
@@ -163,13 +182,13 @@ public final class DeviceVideoCapabilities {
                 continue;
             }
             if (assessment.hardwareAccelerated) {
-                return target;
-            }
-            if (softwareTarget == null) {
-                softwareTarget = target;
+                hardwareTargets.add(target);
+            } else {
+                softwareTargets.add(target);
             }
         }
-        return softwareTarget;
+        hardwareTargets.addAll(softwareTargets);
+        return hardwareTargets;
     }
 
     private static boolean isHardwareAccelerated(MediaCodecInfo codecInfo) {

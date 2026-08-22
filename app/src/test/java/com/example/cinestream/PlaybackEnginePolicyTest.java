@@ -36,6 +36,7 @@ public class PlaybackEnginePolicyTest {
     public void bundledSoftwareVideoSupportMatchesNativeFallbackSet() {
         assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/av01"));
         assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/x-vnd.on2.vp9"));
+        assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/x-vnd.on2.vp8"));
         assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/avc"));
         assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/hevc"));
         assertTrue(PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder("video/mp4v-es"));
