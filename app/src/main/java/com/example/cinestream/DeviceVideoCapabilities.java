@@ -30,11 +30,19 @@ public final class DeviceVideoCapabilities {
         public final Support support;
         public final String decoderName;
         public final boolean hardwareAccelerated;
+        /** 1 when a performance point covers the format, -1 when points reject it, 0 unknown. */
+        public final int performancePointSupport;
 
-        private Assessment(Support support, String decoderName, boolean hardwareAccelerated) {
+        private Assessment(
+                Support support,
+                String decoderName,
+                boolean hardwareAccelerated,
+                int performancePointSupport
+        ) {
             this.support = support;
             this.decoderName = decoderName;
             this.hardwareAccelerated = hardwareAccelerated;
+            this.performancePointSupport = performancePointSupport;
         }
     }
 
@@ -44,21 +52,21 @@ public final class DeviceVideoCapabilities {
     public static Assessment assess(Format format) {
         if (format == null || format.sampleMimeType == null
                 || !format.sampleMimeType.startsWith("video/")) {
-            return new Assessment(Support.UNKNOWN, null, false);
+            return new Assessment(Support.UNKNOWN, null, false, 0);
         }
 
         int width = format.width;
         int height = format.height;
         float frameRate = format.frameRate;
         if (width <= 0 || height <= 0) {
-            return new Assessment(Support.UNKNOWN, null, false);
+            return new Assessment(Support.UNKNOWN, null, false, 0);
         }
 
         MediaCodecInfo[] codecInfos;
         try {
             codecInfos = new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos();
         } catch (Exception e) {
-            return new Assessment(Support.UNKNOWN, null, false);
+            return new Assessment(Support.UNKNOWN, null, false, 0);
         }
 
         boolean foundDecoder = false;
@@ -108,7 +116,8 @@ public final class DeviceVideoCapabilities {
                 Assessment assessment = new Assessment(
                         Support.SUPPORTED,
                         codecInfo.getName(),
-                        hardware
+                        hardware,
+                        performancePointSupport(videoCapabilities, width, height, frameRate)
                 );
                 // Prefer a reported hardware-capable decoder when both hardware and platform
                 // software decoders advertise support. This gives compatibility targeting the
@@ -126,12 +135,13 @@ public final class DeviceVideoCapabilities {
             return supportedSoftware;
         }
         if (!foundDecoder) {
-            return new Assessment(Support.NO_PLATFORM_DECODER, null, false);
+            return new Assessment(Support.NO_PLATFORM_DECODER, null, false, 0);
         }
         return new Assessment(
                 Support.EXCEEDS_REPORTED_CAPABILITY,
                 bestDecoder,
-                bestHardware
+                bestHardware,
+                -1
         );
     }
 
@@ -205,5 +215,37 @@ public final class DeviceVideoCapabilities {
                 || name.startsWith("c2.android.")
                 || name.contains("ffmpeg")
                 || name.contains("sw."));
+    }
+
+    private static int performancePointSupport(
+            MediaCodecInfo.VideoCapabilities capabilities,
+            int width,
+            int height,
+            float frameRate
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || frameRate <= 0f) {
+            return 0;
+        }
+        try {
+            List<MediaCodecInfo.VideoCapabilities.PerformancePoint> points =
+                    capabilities.getSupportedPerformancePoints();
+            if (points == null || points.isEmpty()) {
+                return 0;
+            }
+            MediaCodecInfo.VideoCapabilities.PerformancePoint requested =
+                    new MediaCodecInfo.VideoCapabilities.PerformancePoint(
+                            width,
+                            height,
+                            Math.max(1, Math.round(frameRate))
+                    );
+            for (MediaCodecInfo.VideoCapabilities.PerformancePoint point : points) {
+                if (point.covers(requested)) {
+                    return 1;
+                }
+            }
+            return -1;
+        } catch (RuntimeException ignored) {
+            return 0;
+        }
     }
 }

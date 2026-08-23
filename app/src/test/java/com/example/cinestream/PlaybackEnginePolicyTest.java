@@ -84,4 +84,19 @@ public class PlaybackEnginePolicyTest {
                 false
         ));
     }
+
+    @Test
+    public void wrappedGovernorHandoffIsRecognized() {
+        Throwable wrapped = new IllegalStateException(
+                "renderer wrapper",
+                new RuntimeException(
+                        "nested",
+                        new VideoResourceGovernor.HandoffException("too slow")
+                )
+        );
+        assertTrue(PlaybackEnginePolicy.isGovernorHandoff(wrapped));
+        assertFalse(PlaybackEnginePolicy.isGovernorHandoff(
+                new IllegalStateException("ordinary failure")
+        ));
+    }
 }

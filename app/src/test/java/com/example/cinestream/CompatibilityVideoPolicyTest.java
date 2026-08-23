@@ -53,6 +53,8 @@ public class CompatibilityVideoPolicyTest {
                 targets.get(0),
                 targets.get(1)
         ));
+        assertTrue(targets.stream().anyMatch(target ->
+                target.height == 480 && Math.abs(target.frameRate - 24f) < 0.5f));
     }
 
     @Test
@@ -100,5 +102,23 @@ public class CompatibilityVideoPolicyTest {
 
         assertTrue(CompatibilityVideoTranscoder.estimateRequiredBytes(target, 0L)
                 >= 128L * 1024L * 1024L);
+    }
+
+    @Test
+    public void resourceCeilingRejectsHigherResolutionOrFrameRate() {
+        CompatibilityVideoPolicy.Target ceiling =
+                new CompatibilityVideoPolicy.Target(1280, 720, 30f);
+        assertTrue(CompatibilityVideoPolicy.isWithinCeiling(
+                new CompatibilityVideoPolicy.Target(1280, 720, 30f),
+                ceiling
+        ));
+        assertFalse(CompatibilityVideoPolicy.isWithinCeiling(
+                new CompatibilityVideoPolicy.Target(1920, 1080, 30f),
+                ceiling
+        ));
+        assertFalse(CompatibilityVideoPolicy.isWithinCeiling(
+                new CompatibilityVideoPolicy.Target(1280, 720, 60f),
+                ceiling
+        ));
     }
 }

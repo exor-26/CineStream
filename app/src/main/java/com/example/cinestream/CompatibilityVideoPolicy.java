@@ -47,6 +47,9 @@ final class CompatibilityVideoPolicy {
             if (highFrameRate) {
                 addUnique(candidates, new Target(size[0], size[1], 30f));
             }
+            if (bounds[1] == 480 && originalRate > 24.5f) {
+                addUnique(candidates, new Target(size[0], size[1], 24f));
+            }
         }
         return candidates;
     }
@@ -72,6 +75,15 @@ final class CompatibilityVideoPolicy {
                 && current.frameRate > 31f
                 && next.frameRate > 0f
                 && next.frameRate <= 31f;
+    }
+
+    static boolean isWithinCeiling(Target candidate, Target ceiling) {
+        return candidate != null
+                && (ceiling == null
+                || (candidate.width <= ceiling.width
+                && candidate.height <= ceiling.height
+                && (ceiling.frameRate <= 0f
+                || candidate.frameRate <= ceiling.frameRate + 0.5f)));
     }
 
     private static int evenAtLeastTwo(int value) {

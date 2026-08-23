@@ -130,6 +130,17 @@ public final class PlaybackEnginePolicy {
                 || reportedSupport == DeviceVideoCapabilities.Support.NO_PLATFORM_DECODER;
     }
 
+    static boolean isGovernorHandoff(Throwable error) {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 12; depth++) {
+            if (current instanceof VideoResourceGovernor.HandoffException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     static boolean isVideoDecoderFailure(PlaybackException error) {
         return isDecoderFailure(error) && isVideoRendererFailure(error);
     }

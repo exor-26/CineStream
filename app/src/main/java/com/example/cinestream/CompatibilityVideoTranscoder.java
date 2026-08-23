@@ -306,12 +306,38 @@ final class CompatibilityVideoTranscoder {
             float sourceFrameRate,
             Callback callback
     ) {
+        return start(
+                context,
+                sourceUri,
+                sourceWidth,
+                sourceHeight,
+                sourceFrameRate,
+                null,
+                callback
+        );
+    }
+
+    static Session start(
+            Context context,
+            Uri sourceUri,
+            int sourceWidth,
+            int sourceHeight,
+            float sourceFrameRate,
+            CompatibilityVideoPolicy.Target ceiling,
+            Callback callback
+    ) {
         List<CompatibilityVideoPolicy.Target> targets =
                 DeviceVideoCapabilities.chooseH264CompatibilityTargets(
                         sourceWidth,
                         sourceHeight,
                         sourceFrameRate
                 );
+        if (ceiling != null) {
+            targets.removeIf(target -> !CompatibilityVideoPolicy.isWithinCeiling(
+                    target,
+                    ceiling
+            ));
+        }
         if (targets.isEmpty()) {
             callback.onError(
                     "No device-supported H.264 compatibility target was found.",

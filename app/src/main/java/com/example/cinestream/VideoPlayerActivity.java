@@ -11,6 +11,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.GestureDetector;
@@ -42,6 +43,7 @@ import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.source.FilteringMediaSource;
 import androidx.media3.exoplayer.source.MediaSource;
@@ -105,6 +107,14 @@ public class VideoPlayerActivity extends AppCompatActivity {
             PlaybackEnginePolicy.DecoderMode.HARDWARE_FIRST;
     private DeviceVideoCapabilities.Assessment currentVideoAssessment;
     private Format softwareRecoveryVideoFormat;
+    private RuntimeVideoResourceMonitor videoResourceMonitor;
+    private CompatibilityVideoPolicy.Target compatibilityCeiling;
+    private long softwareObservationStartMs;
+    private long softwareObservationStartPositionMs;
+    private int softwareRenderedFrames;
+    private int softwareDroppedFrames;
+    private boolean softwareStartupObserved;
+    private boolean governorHandoffStarted;
 
     private GestureDetector gestureDetector;
     private AudioManager audioManager;
@@ -119,6 +129,28 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private LoudnessEnhancer loudnessEnhancer;
     private final Runnable hideBrightnessOverlayRunnable = () -> brightnessOverlay.setVisibility(View.GONE);
     private final Runnable hideVolumeOverlayRunnable = () -> volumeOverlay.setVisibility(View.GONE);
+
+    private final AnalyticsListener videoPerformanceListener = new AnalyticsListener() {
+        @Override
+        public void onDroppedVideoFrames(EventTime eventTime, int droppedFrames, long elapsedMs) {
+            if (isObservingDirectSoftwareVideo()) {
+                softwareDroppedFrames += Math.max(0, droppedFrames);
+            }
+        }
+
+        @Override
+        public void onVideoFrameProcessingOffset(
+                EventTime eventTime,
+                long totalProcessingOffsetUs,
+                int frameCount
+        ) {
+            if (isObservingDirectSoftwareVideo()) {
+                softwareRenderedFrames += Math.max(0, frameCount);
+            }
+        }
+    };
+
+    private final Runnable softwareGovernorRunnable = this::evaluateDirectSoftwarePlayback;
 
     private final Player.Listener playbackListener = new Player.Listener() {
         @Override
@@ -143,6 +175,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 softwareVideoRecoveryAttempted = false;
                 hardwareVideoFailureObserved = false;
                 softwareRecoveryVideoFormat = null;
+                compatibilityCeiling = null;
+                governorHandoffStarted = false;
                 if (decoderMode.preferSoftwareVideo) {
                     decoderMode = decoderMode.withoutSoftwareVideo();
                     String targetPlaybackKey = playbackKey;
@@ -287,6 +321,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
 
         playbackKey = resolvePlaybackKey(videoUri);
+        videoResourceMonitor = new RuntimeVideoResourceMonitor(this);
         playlistTitles = getIntent().getStringArrayListExtra(EXTRA_PLAYLIST_TITLES);
         tvVideoName.setText(resolveDisplayTitle(videoUri));
 
@@ -350,6 +385,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 .build();
         exoPlayer.setAudioAttributes(audioAttributes, true);
         exoPlayer.addListener(playbackListener);
+        exoPlayer.addAnalyticsListener(videoPerformanceListener);
         playerView.setPlayer(exoPlayer);
     }
 
@@ -381,6 +417,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         exoPlayer.prepare();
         exoPlayer.setPlayWhenReady(playWhenReady);
         applyVolumeBoost();
+        startSoftwareObservationIfNeeded();
     }
 
     private void createPlayerWithCompatibilityVideo(
@@ -428,6 +465,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         exoPlayer.prepare();
         exoPlayer.setPlayWhenReady(playWhenReady);
         applyVolumeBoost();
+        stopSoftwareObservation();
     }
 
     private MediaSource buildCompatibilityMediaSource(
@@ -485,6 +523,119 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
     }
 
+    private boolean isObservingDirectSoftwareVideo() {
+        return exoPlayer != null
+                && decoderMode.preferSoftwareVideo
+                && !governorHandoffStarted
+                && (compatibilityPlaybackKey == null
+                || !compatibilityPlaybackKey.equals(playbackKey));
+    }
+
+    private void startSoftwareObservationIfNeeded() {
+        stopSoftwareObservation();
+        if (!isObservingDirectSoftwareVideo()) {
+            return;
+        }
+        softwareObservationStartMs = SystemClock.elapsedRealtime();
+        softwareObservationStartPositionMs = Math.max(0L, exoPlayer.getCurrentPosition());
+        uiHandler.postDelayed(softwareGovernorRunnable, 1_000L);
+    }
+
+    private void stopSoftwareObservation() {
+        uiHandler.removeCallbacks(softwareGovernorRunnable);
+        softwareObservationStartMs = 0L;
+        softwareObservationStartPositionMs = 0L;
+        softwareRenderedFrames = 0;
+        softwareDroppedFrames = 0;
+        softwareStartupObserved = false;
+    }
+
+    private void resetSoftwareObservationWindow(long nowMs, long mediaPositionMs) {
+        softwareObservationStartMs = nowMs;
+        softwareObservationStartPositionMs = Math.max(0L, mediaPositionMs);
+        softwareRenderedFrames = 0;
+        softwareDroppedFrames = 0;
+    }
+
+    private void evaluateDirectSoftwarePlayback() {
+        if (!isObservingDirectSoftwareVideo() || videoResourceMonitor == null) {
+            return;
+        }
+        if (!exoPlayer.getPlayWhenReady()) {
+            resetSoftwareObservationWindow(
+                    SystemClock.elapsedRealtime(),
+                    exoPlayer.getCurrentPosition()
+            );
+            uiHandler.postDelayed(softwareGovernorRunnable, 1_000L);
+            return;
+        }
+
+        Format format = softwareRecoveryVideoFormat;
+        if (format == null) {
+            uiHandler.postDelayed(softwareGovernorRunnable, 1_000L);
+            return;
+        }
+        long nowMs = SystemClock.elapsedRealtime();
+        long elapsedMs = Math.max(0L, nowMs - softwareObservationStartMs);
+        long requiredWindowMs = softwareStartupObserved
+                ? VideoResourceGovernor.SOFTWARE_RECHECK_MS
+                : VideoResourceGovernor.SOFTWARE_STARTUP_GRACE_MS;
+        if (elapsedMs < requiredWindowMs) {
+            uiHandler.postDelayed(
+                    softwareGovernorRunnable,
+                    Math.min(1_000L, requiredWindowMs - elapsedMs)
+            );
+            return;
+        }
+
+        long mediaProgressMs = Math.max(
+                0L,
+                exoPlayer.getCurrentPosition() - softwareObservationStartPositionMs
+        );
+        VideoResourceGovernor.Snapshot snapshot = videoResourceMonitor.capture(
+                format,
+                currentVideoAssessment,
+                hardwareVideoFailureObserved
+        );
+        VideoResourceGovernor.Decision decision = VideoResourceGovernor.evaluate(
+                snapshot,
+                new VideoResourceGovernor.Observation(
+                        elapsedMs,
+                        mediaProgressMs,
+                        softwareRenderedFrames,
+                        softwareDroppedFrames,
+                        softwareStartupObserved
+                )
+        );
+        compatibilityCeiling = decision.compatibilityCeiling(
+                format.width,
+                format.height,
+                format.frameRate
+        );
+        Log.i("VideoResourceGovernor",
+                "ceiling=" + decision.ceiling + " " + decision.reason);
+
+        if (!decision.directSoftwareSustainable
+                && !compatibilityTranscodeAttempted
+                && CineFfmpegLibrary.supportsTransformerMimeType(format.sampleMimeType)) {
+            governorHandoffStarted = true;
+            compatibilityTranscodeAttempted = true;
+            hardwareVideoFailureObserved = true;
+            Log.w("VideoResourceGovernor",
+                    "Direct software playback handed off to compatibility",
+                    new VideoResourceGovernor.HandoffException(decision.reason));
+            startCompatibilityRecovery(format);
+            return;
+        }
+
+        softwareStartupObserved = true;
+        resetSoftwareObservationWindow(nowMs, exoPlayer.getCurrentPosition());
+        uiHandler.postDelayed(
+                softwareGovernorRunnable,
+                VideoResourceGovernor.SOFTWARE_RECHECK_MS
+        );
+    }
+
     private void handlePlaybackError(PlaybackException error) {
         Log.e("VideoPlayer", "Playback failed: " + error.getErrorCodeName(), error);
 
@@ -494,6 +645,15 @@ public class VideoPlayerActivity extends AppCompatActivity {
             if (!decoderMode.preferSoftwareVideo) {
                 hardwareVideoFailureObserved = true;
             }
+        }
+
+        if (PlaybackEnginePolicy.isGovernorHandoff(error)
+                && !compatibilityTranscodeAttempted
+                && softwareRecoveryVideoFormat != null) {
+            compatibilityTranscodeAttempted = true;
+            governorHandoffStarted = true;
+            startCompatibilityRecovery(softwareRecoveryVideoFormat);
+            return;
         }
 
         if (PlaybackEnginePolicy.shouldRetryWithSoftwareAudio(decoderMode, error)) {
@@ -618,6 +778,24 @@ public class VideoPlayerActivity extends AppCompatActivity {
         final long recoveryPosition = position;
         final boolean recoveryPlayWhenReady = playWhenReady;
 
+        if (compatibilityCeiling == null && videoResourceMonitor != null) {
+            VideoResourceGovernor.Decision decision = VideoResourceGovernor.evaluate(
+                    videoResourceMonitor.capture(
+                            failedVideo,
+                            currentVideoAssessment,
+                            hardwareVideoFailureObserved
+                    ),
+                    null
+            );
+            compatibilityCeiling = decision.compatibilityCeiling(
+                    failedVideo.width,
+                    failedVideo.height,
+                    failedVideo.frameRate
+            );
+        }
+
+        decoderMode = decoderMode.withoutSoftwareVideo();
+        stopSoftwareObservation();
         releasePlayerOnly();
         compatibilityTranscodeSession = CompatibilityVideoTranscoder.start(
                 this,
@@ -625,6 +803,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 failedVideo.width,
                 failedVideo.height,
                 failedVideo.frameRate,
+                compatibilityCeiling,
                 new CompatibilityVideoTranscoder.Callback() {
                     @Override
                     public void onReady(
@@ -807,9 +986,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void releasePlayerOnly() {
+        stopSoftwareObservation();
         releaseLoudnessEnhancer();
         if (exoPlayer != null) {
             exoPlayer.removeListener(playbackListener);
+            exoPlayer.removeAnalyticsListener(videoPerformanceListener);
             playerView.setPlayer(null);
             exoPlayer.release();
             exoPlayer = null;
@@ -831,6 +1012,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         super.onResume();
         if (exoPlayer != null) {
             exoPlayer.setPlayWhenReady(true);
+            startSoftwareObservationIfNeeded();
         }
     }
 
