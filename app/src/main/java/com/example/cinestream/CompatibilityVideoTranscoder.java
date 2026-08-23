@@ -32,12 +32,9 @@ import androidx.media3.transformer.Transformer;
 import com.example.cinestream.ffmpeg.CineFfmpegTransformerDecoderFactory;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Creates and caches a video-only H.264 compatibility rendition.
@@ -442,21 +439,11 @@ final class CompatibilityVideoTranscoder {
         }
     }
 
-    private static String sourceKey(Context context, Uri uri) {
+    static String sourceKey(Context context, Uri uri) {
         long length = readSourceLength(context, uri);
         long modified = readSourceModifiedTime(context, uri);
         String material = uri + "|" + length + "|" + modified;
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(material.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder();
-            for (int i = 0; i < 12 && i < hash.length; i++) {
-                builder.append(String.format(Locale.US, "%02x", hash[i] & 0xff));
-            }
-            return builder.toString();
-        } catch (Exception e) {
-            return Integer.toHexString(material.hashCode());
-        }
+        return ProgressiveCompatibilityCache.stableSourceIdentity(material);
     }
 
     private static long readSourceLength(Context context, Uri uri) {
