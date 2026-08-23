@@ -1,6 +1,7 @@
 package com.example.cinestream.ffmpeg;
 
 import androidx.media3.common.MimeTypes;
+import androidx.media3.common.C;
 
 import org.junit.Test;
 
@@ -41,9 +42,39 @@ public class CineFfmpegLibraryTest {
         assertEquals("h264", CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_H264));
         assertEquals("hevc", CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_H265));
         assertEquals("vp8", CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_VP8));
+        assertEquals("av1", CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_AV1));
+        assertEquals("vp9", CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_VP9));
         assertNull(CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_DOLBY_VISION));
-        assertNull(CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_AV1));
-        assertNull(CineFfmpegLibrary.codecNameForMimeType(MimeTypes.VIDEO_VP9));
+    }
+
+    @Test
+    public void realtimeRendererIsSecondaryUntilExplicitRecovery() {
+        assertEquals(C.FORMAT_EXCEEDS_CAPABILITIES,
+                CineFfmpegVideoRenderer.supportLevelForMode(false));
+        assertEquals(C.FORMAT_HANDLED,
+                CineFfmpegVideoRenderer.supportLevelForMode(true));
+    }
+
+    @Test
+    public void realtimeDecoderThreadsAreBoundedBySourceComplexityAndCpu() {
+        assertEquals(2, CineFfmpegVideoRenderer.chooseThreadCount(7680, 4320, 12));
+        assertEquals(4, CineFfmpegVideoRenderer.chooseThreadCount(3840, 2160, 12));
+        assertEquals(8, CineFfmpegVideoRenderer.chooseThreadCount(1920, 1080, 12));
+        assertEquals(3, CineFfmpegVideoRenderer.chooseThreadCount(1920, 1080, 3));
+        assertEquals(2, CineFfmpegVideoRenderer.chooseThreadCount(-1, -1, 12));
+        assertEquals(1, CineFfmpegVideoRenderer.chooseThreadCount(7680, 4320, 0));
+    }
+
+    @Test
+    public void realtimeSurfaceOutputIsDisplayBoundedWithoutUpscaling() {
+        assertEquals(1920,
+                CineFfmpegVideoRenderer.fitWithinDisplay(7680, 4320, 1920, 1080)[0]);
+        assertEquals(1080,
+                CineFfmpegVideoRenderer.fitWithinDisplay(7680, 4320, 1920, 1080)[1]);
+        assertEquals(1280,
+                CineFfmpegVideoRenderer.fitWithinDisplay(1280, 720, 1920, 1080)[0]);
+        assertEquals(720,
+                CineFfmpegVideoRenderer.fitWithinDisplay(1280, 720, 1920, 1080)[1]);
     }
 
     @Test

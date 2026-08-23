@@ -117,6 +117,19 @@ public final class PlaybackEnginePolicy {
                 || CineFfmpegLibrary.isDeclaredVideoMimeType(mime);
     }
 
+    static boolean shouldAllowCompatibilityRecovery(
+            boolean runtimeHardwareFailure,
+            DeviceVideoCapabilities.Support reportedSupport,
+            boolean transformerDecoderAvailable
+    ) {
+        if (!transformerDecoderAvailable) {
+            return false;
+        }
+        return runtimeHardwareFailure
+                || reportedSupport == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY
+                || reportedSupport == DeviceVideoCapabilities.Support.NO_PLATFORM_DECODER;
+    }
+
     static boolean isVideoDecoderFailure(PlaybackException error) {
         return isDecoderFailure(error) && isVideoRendererFailure(error);
     }
@@ -205,7 +218,10 @@ public final class PlaybackEnginePolicy {
                     allowedVideoJoiningTimeMs,
                     eventHandler,
                     eventListener,
-                    SOFTWARE_VIDEO_DROPPED_FRAMES_NOTIFY_THRESHOLD
+                    SOFTWARE_VIDEO_DROPPED_FRAMES_NOTIFY_THRESHOLD,
+                    decoderMode.preferSoftwareVideo,
+                    context.getResources().getDisplayMetrics().widthPixels,
+                    context.getResources().getDisplayMetrics().heightPixels
             );
             if (decoderMode.preferSoftwareVideo) {
                 out.add(0, ffmpegRenderer);

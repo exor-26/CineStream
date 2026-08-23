@@ -65,4 +65,23 @@ public class PlaybackEnginePolicyTest {
                 video.withoutSoftwareVideo()
         );
     }
+
+    @Test
+    public void actualHardwareFailureOverridesOptimisticCapabilityTable() {
+        assertTrue(PlaybackEnginePolicy.shouldAllowCompatibilityRecovery(
+                true,
+                DeviceVideoCapabilities.Support.SUPPORTED,
+                true
+        ));
+        assertFalse(PlaybackEnginePolicy.shouldAllowCompatibilityRecovery(
+                false,
+                DeviceVideoCapabilities.Support.SUPPORTED,
+                true
+        ));
+        assertFalse(PlaybackEnginePolicy.shouldAllowCompatibilityRecovery(
+                true,
+                DeviceVideoCapabilities.Support.SUPPORTED,
+                false
+        ));
+    }
 }

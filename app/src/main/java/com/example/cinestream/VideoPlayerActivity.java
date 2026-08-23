@@ -94,6 +94,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private boolean isControlsVisible = true;
     private boolean compatibilityTranscodeAttempted = false;
     private boolean capabilityWarningLogged = false;
+    private boolean softwareVideoRecoveryAttempted = false;
+    private boolean hardwareVideoFailureObserved = false;
     private CompatibilityVideoTranscoder.Session compatibilityTranscodeSession;
     private Uri compatibilityOriginalUri;
     private Uri compatibilityVideoUri;
@@ -102,6 +104,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private PlaybackEnginePolicy.DecoderMode decoderMode =
             PlaybackEnginePolicy.DecoderMode.HARDWARE_FIRST;
     private DeviceVideoCapabilities.Assessment currentVideoAssessment;
+    private Format softwareRecoveryVideoFormat;
 
     private GestureDetector gestureDetector;
     private AudioManager audioManager;
@@ -137,6 +140,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     && previousPlaybackKey.equals(playbackKey);
             if (!sameLogicalItem) {
                 compatibilityTranscodeAttempted = false;
+                softwareVideoRecoveryAttempted = false;
+                hardwareVideoFailureObserved = false;
+                softwareRecoveryVideoFormat = null;
                 if (decoderMode.preferSoftwareVideo) {
                     decoderMode = decoderMode.withoutSoftwareVideo();
                     String targetPlaybackKey = playbackKey;
@@ -482,6 +488,14 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private void handlePlaybackError(PlaybackException error) {
         Log.e("VideoPlayer", "Playback failed: " + error.getErrorCodeName(), error);
 
+        Format failedVideo = PlaybackEnginePolicy.getFailedVideoFormat(error);
+        if (failedVideo != null && PlaybackEnginePolicy.isVideoDecoderFailure(error)) {
+            softwareRecoveryVideoFormat = failedVideo;
+            if (!decoderMode.preferSoftwareVideo) {
+                hardwareVideoFailureObserved = true;
+            }
+        }
+
         if (PlaybackEnginePolicy.shouldRetryWithSoftwareAudio(decoderMode, error)) {
             decoderMode = decoderMode.withSoftwareAudio();
             ArrayList<MediaItem> items = snapshotMediaItems();
@@ -496,13 +510,13 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
 
         if (PlaybackEnginePolicy.shouldRetryWithSoftwareVideo(decoderMode, error)) {
+            softwareVideoRecoveryAttempted = true;
             decoderMode = decoderMode.withSoftwareVideo();
             ArrayList<MediaItem> items = snapshotMediaItems();
             int itemIndex = exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0;
             long position = exoPlayer != null ? Math.max(0L, exoPlayer.getCurrentPosition()) : 0L;
             boolean playWhenReady = exoPlayer == null || exoPlayer.getPlayWhenReady();
 
-            Format failedVideo = PlaybackEnginePolicy.getFailedVideoFormat(error);
             Log.w("VideoPlayer",
                     "Retrying with bundled software video renderer for "
                             + (failedVideo != null ? failedVideo.sampleMimeType : "video")
@@ -511,7 +525,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
             return;
         }
 
-        Format failedVideo = PlaybackEnginePolicy.getFailedVideoFormat(error);
         DeviceVideoCapabilities.Assessment assessment = currentVideoAssessment;
         if (failedVideo != null
                 && (assessment == null
@@ -520,13 +533,13 @@ public class VideoPlayerActivity extends AppCompatActivity {
             currentVideoAssessment = assessment;
         }
 
-        boolean canCreateCompatibilityVideo = assessment != null
-                && (assessment.support
-                == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY
-                || (assessment.support == DeviceVideoCapabilities.Support.NO_PLATFORM_DECODER
-                && CineFfmpegLibrary.supportsTransformerMimeType(failedVideo != null
-                ? failedVideo.sampleMimeType
-                : null)));
+        boolean canCreateCompatibilityVideo = PlaybackEnginePolicy.shouldAllowCompatibilityRecovery(
+                hardwareVideoFailureObserved,
+                assessment != null ? assessment.support : DeviceVideoCapabilities.Support.UNKNOWN,
+                CineFfmpegLibrary.supportsTransformerMimeType(
+                        failedVideo != null ? failedVideo.sampleMimeType : null
+                )
+        );
 
         if (!compatibilityTranscodeAttempted
                 && PlaybackEnginePolicy.isVideoDecoderFailure(error)
@@ -686,6 +699,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     continue;
                 }
                 Format format = mediaTrackGroup.getFormat(i);
+                if (decoderMode.preferSoftwareVideo) {
+                    softwareRecoveryVideoFormat = format;
+                }
                 currentVideoAssessment = DeviceVideoCapabilities.assess(format);
                 Log.i("VideoCapability",
                         "mime=" + format.sampleMimeType
@@ -729,6 +745,22 @@ public class VideoPlayerActivity extends AppCompatActivity {
         if (compatibilityTranscodeAttempted
                 || format.width <= 0
                 || format.height <= 0) {
+            return;
+        }
+
+        if (!decoderMode.preferSoftwareVideo
+                && !softwareVideoRecoveryAttempted
+                && CineFfmpegLibrary.isDeclaredVideoMimeType(format.sampleMimeType)) {
+            softwareVideoRecoveryAttempted = true;
+            hardwareVideoFailureObserved = true;
+            softwareRecoveryVideoFormat = format;
+            decoderMode = decoderMode.withSoftwareVideo();
+            ArrayList<MediaItem> items = snapshotMediaItems();
+            int itemIndex = exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0;
+            long position = exoPlayer != null ? Math.max(0L, exoPlayer.getCurrentPosition()) : 0L;
+            boolean playWhenReady = exoPlayer == null || exoPlayer.getPlayWhenReady();
+            Log.w("VideoCapability", "Trying direct bundled software video playback first");
+            rebuildPlayerPreservingCompatibility(items, itemIndex, position, playWhenReady);
             return;
         }
 

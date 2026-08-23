@@ -66,6 +66,8 @@ public final class CineFfmpegLibrary {
             case MimeTypes.VIDEO_FLV -> "flv";
             case MimeTypes.VIDEO_MJPEG -> "mjpeg";
             case MimeTypes.VIDEO_VP8 -> "vp8";
+            case MimeTypes.VIDEO_AV1 -> "av1";
+            case MimeTypes.VIDEO_VP9 -> "vp9";
             default -> null;
         };
     }

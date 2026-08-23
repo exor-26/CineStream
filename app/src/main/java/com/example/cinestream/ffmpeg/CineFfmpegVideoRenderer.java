@@ -30,6 +30,10 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
     private static final int NUM_OUTPUT_BUFFERS = 3;
     private static final int DEFAULT_INPUT_BUFFER_SIZE = 2 * 1024 * 1024;
 
+    private final boolean explicitSoftwareRecovery;
+    private final int displayWidth;
+    private final int displayHeight;
+
     @Nullable
     private CineFfmpegVideoDecoder decoder;
 
@@ -37,9 +41,15 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
             long allowedJoiningTimeMs,
             @Nullable Handler eventHandler,
             @Nullable VideoRendererEventListener eventListener,
-            int maxDroppedFramesToNotify
+            int maxDroppedFramesToNotify,
+            boolean explicitSoftwareRecovery,
+            int displayWidth,
+            int displayHeight
     ) {
         super(allowedJoiningTimeMs, eventHandler, eventListener, maxDroppedFramesToNotify);
+        this.explicitSoftwareRecovery = explicitSoftwareRecovery;
+        this.displayWidth = Math.max(1, displayWidth);
+        this.displayHeight = Math.max(1, displayHeight);
     }
 
     @Override
@@ -63,7 +73,7 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_DRM);
         }
         return RendererCapabilities.create(
-                C.FORMAT_HANDLED,
+                supportLevelForMode(explicitSoftwareRecovery),
                 ADAPTIVE_NOT_SUPPORTED,
                 TUNNELING_NOT_SUPPORTED
         );
@@ -76,7 +86,11 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
         int initialInputBufferSize = format.maxInputSize != Format.NO_VALUE
                 ? format.maxInputSize
                 : DEFAULT_INPUT_BUFFER_SIZE;
-        int threads = Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors()));
+        int threads = chooseThreadCount(
+                format.width,
+                format.height,
+                Runtime.getRuntime().availableProcessors()
+        );
         CineFfmpegVideoDecoder newDecoder = new CineFfmpegVideoDecoder(
                 NUM_INPUT_BUFFERS,
                 NUM_OUTPUT_BUFFERS,
@@ -99,7 +113,19 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
             throw new CineFfmpegDecoderException("FFmpeg renderer has no decoder instance.");
         }
         try {
-            currentDecoder.renderToSurface(outputBuffer, surface);
+            int[] outputSize = fitWithinDisplay(
+                    outputBuffer.width,
+                    outputBuffer.height,
+                    displayWidth,
+                    displayHeight
+            );
+            currentDecoder.renderToSurface(
+                    outputBuffer,
+                    surface,
+                    outputBuffer.timeUs,
+                    outputSize[0],
+                    outputSize[1]
+            );
         } finally {
             outputBuffer.release();
         }
@@ -111,5 +137,45 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
         if (currentDecoder != null) {
             currentDecoder.setOutputMode(outputMode);
         }
+    }
+
+    static int supportLevelForMode(boolean explicitSoftwareRecovery) {
+        return explicitSoftwareRecovery ? C.FORMAT_HANDLED : C.FORMAT_EXCEEDS_CAPABILITIES;
+    }
+
+    static int chooseThreadCount(int width, int height, int availableProcessors) {
+        int processorLimit = Math.max(1, availableProcessors);
+        int dimensionLimit;
+        if (width <= 0 || height <= 0) {
+            dimensionLimit = 2;
+        } else {
+            long pixels = (long) width * (long) height;
+            if (pixels > 4096L * 2160L) {
+                dimensionLimit = 2;
+            } else if (pixels > 1920L * 1080L) {
+                dimensionLimit = 4;
+            } else {
+                dimensionLimit = 8;
+            }
+        }
+        return Math.max(1, Math.min(processorLimit, dimensionLimit));
+    }
+
+    static int[] fitWithinDisplay(
+            int sourceWidth,
+            int sourceHeight,
+            int displayWidth,
+            int displayHeight
+    ) {
+        if (sourceWidth <= 0 || sourceHeight <= 0 || displayWidth <= 0 || displayHeight <= 0) {
+            return new int[]{Math.max(1, sourceWidth), Math.max(1, sourceHeight)};
+        }
+        double scale = Math.min(
+                1d,
+                Math.min((double) displayWidth / sourceWidth, (double) displayHeight / sourceHeight)
+        );
+        int width = Math.max(1, (int) Math.round(sourceWidth * scale));
+        int height = Math.max(1, (int) Math.round(sourceHeight * scale));
+        return new int[]{width, height};
     }
 }
