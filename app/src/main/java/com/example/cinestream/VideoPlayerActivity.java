@@ -113,6 +113,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private String progressivePlaybackKey;
     private boolean progressivePlaybackActive;
     private boolean progressiveFallbackStarted;
+    private boolean compatibilityCacheLookupPending;
     private Uri compatibilityOriginalUri;
     private Uri compatibilityVideoUri;
     private String compatibilityPlaybackKey;
@@ -786,7 +787,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void startCompatibilityRecovery(Format failedVideo) {
-        if (videoUri == null || playbackKey == null || progressiveFallbackStarted) {
+        if (videoUri == null
+                || playbackKey == null
+                || progressiveFallbackStarted
+                || compatibilityCacheLookupPending) {
             return;
         }
         if (progressiveCompatibilityHandle != null) {
@@ -824,6 +828,87 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     .build());
         }
 
+        compatibilityCacheLookupPending = true;
+        AppExecutors.mediaIo().execute(() -> {
+            File cachedVideo = CompatibilityVideoTranscoder.findCachedVideoForPlayback(
+                    VideoPlayerActivity.this,
+                    sourceUri
+            );
+            uiHandler.post(() -> {
+                compatibilityCacheLookupPending = false;
+                if (isFinishing()
+                        || isDestroyed()
+                        || playbackKey == null
+                        || !sourceKey.equals(playbackKey)
+                        || videoUri == null
+                        || !sourceUri.equals(videoUri)) {
+                    return;
+                }
+                if (cachedVideo != null) {
+                    Log.i("VideoCompatibility", "Starting completed compatibility cache");
+                    startCachedCompatibilityPlayback(
+                            cachedVideo,
+                            recoveryItems,
+                            recoveryIndex,
+                            recoveryPosition,
+                            recoveryPlayWhenReady,
+                            sourceUri,
+                            sourceKey
+                    );
+                    return;
+                }
+                startProgressiveCompatibilityGeneration(
+                        failedVideo,
+                        recoveryItems,
+                        recoveryIndex,
+                        recoveryPosition,
+                        recoveryPlayWhenReady,
+                        sourceUri,
+                        sourceKey
+                );
+            });
+        });
+    }
+
+    private void startCachedCompatibilityPlayback(
+            File cachedVideo,
+            ArrayList<MediaItem> recoveryItems,
+            int recoveryIndex,
+            long recoveryPosition,
+            boolean recoveryPlayWhenReady,
+            Uri sourceUri,
+            String sourceKey
+    ) {
+        decoderMode = decoderMode.withoutSoftwareVideo();
+        stopSoftwareObservation();
+        clearProgressivePlaybackState();
+        releasePlayerOnly();
+        Uri compatibleUri = Uri.fromFile(cachedVideo);
+        compatibilityOriginalUri = sourceUri;
+        compatibilityVideoUri = compatibleUri;
+        compatibilityPlaybackKey = sourceKey;
+        videoUri = sourceUri;
+        playbackKey = sourceKey;
+        createPlayerWithCompatibilityVideo(
+                recoveryItems,
+                recoveryIndex,
+                recoveryPosition,
+                recoveryPlayWhenReady,
+                sourceUri,
+                compatibleUri,
+                sourceKey
+        );
+    }
+
+    private void startProgressiveCompatibilityGeneration(
+            Format failedVideo,
+            ArrayList<MediaItem> recoveryItems,
+            int recoveryIndex,
+            long recoveryPosition,
+            boolean recoveryPlayWhenReady,
+            Uri sourceUri,
+            String sourceKey
+    ) {
         decoderMode = decoderMode.withoutSoftwareVideo();
         stopSoftwareObservation();
         progressiveFallbackStarted = false;

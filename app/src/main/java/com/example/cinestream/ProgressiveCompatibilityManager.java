@@ -354,7 +354,8 @@ final class ProgressiveCompatibilityManager {
                                     completed,
                                     window,
                                     target,
-                                    SystemClock.elapsedRealtime() - exportStartedMs
+                                    SystemClock.elapsedRealtime() - exportStartedMs,
+                                    null
                             );
                         }
 
@@ -365,9 +366,16 @@ final class ProgressiveCompatibilityManager {
                                 ExportException exportException
                         ) {
                             transformer = null;
-                            ProgressiveCompatibilityCache.deleteIncomplete(incomplete);
-                            activeIncomplete = null;
-                            handleExportFailure(exportException);
+                            // A Media3 release timeout can arrive after the fragment was finalized.
+                            // Validate first so a complete segment is not discarded unnecessarily.
+                            validateAndAccept(
+                                    incomplete,
+                                    completed,
+                                    window,
+                                    target,
+                                    SystemClock.elapsedRealtime() - exportStartedMs,
+                                    exportException
+                            );
                         }
                     })
                     .build();
@@ -387,7 +395,8 @@ final class ProgressiveCompatibilityManager {
                 File completed,
                 ProgressiveCompatibilityPolicy.SegmentWindow window,
                 CompatibilityVideoPolicy.Target target,
-                long exportElapsedMs
+                long exportElapsedMs,
+                @Nullable Throwable exportError
         ) {
             AppExecutors.mediaIo().execute(() -> {
                 boolean valid = CompatibilityVideoTranscoder.isUsableVideo(
@@ -422,7 +431,9 @@ final class ProgressiveCompatibilityManager {
                     }
                     if (!accepted) {
                         ProgressiveCompatibilityCache.deleteIncomplete(incomplete);
-                        handleExportFailure(new IllegalStateException(
+                        handleExportFailure(exportError != null
+                                ? exportError
+                                : new IllegalStateException(
                                 "Progressive segment validation failed."
                         ));
                         return;

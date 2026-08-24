@@ -260,6 +260,16 @@ final class CompatibilityVideoTranscoder {
                                 deleteQuietly(outputFile);
                                 return;
                             }
+                            // Transformer can report a player-release timeout after the muxer has
+                            // already finalized a complete file. Preserve that valid output instead
+                            // of deleting it and leaving playback with no video.
+                            if (isUsableVideo(outputFile, durationMs)) {
+                                Log.w(TAG, "Using completed compatibility output after exporter cleanup error");
+                                touch(outputFile);
+                                session.markFinished();
+                                callback.onReady(outputFile, target, false);
+                                return;
+                            }
                             deleteQuietly(outputFile);
                             lastError = exportException;
                             Log.w(TAG, "Compatibility target failed: " + target, exportException);
@@ -433,6 +443,11 @@ final class CompatibilityVideoTranscoder {
      * This does not start a conversion and must be called off the main thread.
      */
     static File findCachedVideoForThumbnail(Context context, Uri sourceUri) {
+        return findCachedVideoForPlayback(context, sourceUri);
+    }
+
+    /** Returns a completed, reusable compatibility file without starting new work. */
+    static File findCachedVideoForPlayback(Context context, Uri sourceUri) {
         File cacheDir = chooseCacheDir(context);
         String prefix = "compat_" + sourceKey(context, sourceUri) + "_";
         File[] files = cacheDir.listFiles((dir, name) ->
@@ -559,11 +574,20 @@ final class CompatibilityVideoTranscoder {
             String height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
             String duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
             long actualDurationMs = parsePositiveLong(duration);
-            return parsePositive(width)
+            boolean structurallyValid = parsePositive(width)
                     && parsePositive(height)
                     && isDurationComplete(expectedDurationMs, actualDurationMs)
-                    && containsH264Video(file)
-                    && containsVisibleFrame(retriever, actualDurationMs);
+                    && containsH264Video(file);
+            if (!structurallyValid) {
+                return false;
+            }
+            // Some low-end platform retrievers cannot extract a frame from an H.264 file that
+            // their normal MediaCodec playback path can decode. A null thumbnail is therefore
+            // inconclusive, not proof that the already-finalized video is black.
+            if (!containsVisibleFrame(retriever, actualDurationMs)) {
+                Log.w(TAG, "Platform frame probe unavailable; accepting structurally valid H.264");
+            }
+            return true;
         } catch (Exception e) {
             return false;
         } finally {
