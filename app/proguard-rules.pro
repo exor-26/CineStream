@@ -36,3 +36,9 @@
 # CineStream's FFmpeg video bridge uses JNI method names and VideoDecoderOutputBuffer fields.
 -keep class com.example.cinestream.ffmpeg.** { *; }
 -keep class androidx.media3.decoder.VideoDecoderOutputBuffer { *; }
+
+# Media3 Transformer keeps newer framework types (including Android 12 media metrics)
+# behind runtime API guards. Do not let R8 class merging move those signatures into
+# unrelated classes that are loaded on older Android releases. Unused Transformer
+# code may still be removed and retained names may still be obfuscated.
+-keep,allowshrinking,allowobfuscation class androidx.media3.transformer.** { *; }
