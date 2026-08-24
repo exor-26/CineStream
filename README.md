@@ -1,6 +1,6 @@
 # CineStream
 
-CineStream is a local Android video player focused on fast on-device browsing and modern Android storage compatibility. It scans the device library through `MediaStore`, groups videos by folder, remembers playback progress, and plays content through a custom full-screen Media3 player with FFmpeg-backed codec support.
+CineStream is a local Android video player focused on fast on-device browsing, broad codec recovery, and modern Android storage compatibility. It scans the device library through `MediaStore`, remembers playback progress, and uses Media3 with CineStream's bundled FFmpeg decoder—never VLC or LibVLC.
 
 ## Highlights
 
@@ -14,6 +14,24 @@ CineStream is a local Android video player focused on fast on-device browsing an
 - Support external `ACTION_VIEW` playback intents
 - Custom player gestures for brightness and volume
 - Audio track selection, crop modes, and orientation lock controls
+- Hardware-first playback with direct CineFFmpeg software recovery
+- Runtime-governed H.264 compatibility playback for unsupported or unsustainable video
+- Reusable progressive compatibility segments for faster replay and seeking
+- Original audio, subtitle, metadata, and track-selection sources remain separate from compatibility video
+
+## Video compatibility flow
+
+Playback decisions use runtime codec results, memory pressure, CPU load, thermal state, source complexity, and measured decoding speed. They do not use manufacturer, model, chipset, or serial-number allowlists.
+
+```text
+MediaCodec hardware playback
+→ direct CineFFmpeg recovery
+→ governed software playback
+→ progressive H.264 compatibility cache
+→ full-file H.264 fallback
+```
+
+Completed compatibility files are reused on replay. Only finalized, structurally validated H.264 MP4 segments enter the playable timeline; incomplete `.part` files are never exposed to the player.
 
 ## Why this project matters
 
@@ -26,6 +44,7 @@ Older Android media apps often depend on raw file paths and broad storage permis
 - AndroidX
 - Media3 / ExoPlayer
 - Jellyfin Media3 FFmpeg decoder extension
+- CineStream native FFmpeg video decoder and Dolby Vision Profile 5 reshape path
 - Glide
 - Material Components
 - Palette API
@@ -74,7 +93,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Tested status
 
-The current debug build has been verified on a connected physical Vivo V2504 (Vivo T4 Ultra).
+The current release flow has been exercised on physical Vivo, Realme, and older Android devices. The exact 7680×4320 60 fps Dolby Vision Profile 5 test file was also used for compatibility and replay validation.
 
 Verified flows:
 
@@ -84,6 +103,10 @@ Verified flows:
 - player open from in-app library tap
 - external `ACTION_VIEW` content-URI playback entry
 - no runtime crashes during the verified core flow
+- completed progressive segments are reused during replay
+- H.264 compatibility output is selected by the device hardware decoder
+
+An 8K Dolby Vision source can exceed the realtime software throughput of older devices. CineStream preserves original audio while preparing compatibility video and caches completed work; it does not claim realtime 8K decoding where the hardware and CPU cannot physically sustain it.
 
 Manual UX-oriented checks such as share target behavior, gesture feel, and destructive media actions should still be validated by hand before release.
 
@@ -105,17 +128,17 @@ Repository templates are included for:
 
 Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
-Signed release artifacts tracked in this repository:
+Signed release artifacts are attached to each GitHub Release:
 
-- `app/release/app-arm64-v8a-release.apk`
-- `app/release/app-armeabi-v7a-release.apk`
+- `CineStream-9.3-arm64-v8a.apk`
+- `CineStream-9.3-armeabi-v7a.apk`
 
 For most modern phones, use the `arm64-v8a` build.
 
 ## Current version
 
-- `versionName`: `9.2`
-- `versionCode`: `87`
+- `versionName`: `9.3`
+- `versionCode`: `88`
 
 ## Release packaging
 
@@ -124,7 +147,7 @@ Release builds are now published as split APKs instead of one universal APK.
 - `arm64-v8a` release APK: optimized for most current Android phones
 - `armeabi-v7a` release APK: fallback for older 32-bit devices
 
-This keeps the release size near the 18-20 MB range without removing player features or codec support.
+Version 9.3 removes a redundant native metadata-only FFmpeg/OpenSSL bundle while retaining CineFFmpeg video, FFmpeg audio, dav1d, VP9, Media3, and compatibility playback. The signed arm64 build is approximately 14 MB.
 
 ## Roadmap ideas
 

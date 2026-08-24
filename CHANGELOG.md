@@ -2,6 +2,30 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.3 - 2026-08-24
+
+### Added
+
+- Hardware-first video recovery ladder using MediaCodec, CineFFmpeg, progressive H.264 compatibility segments, and full-file fallback
+- Runtime resource governor based on measured memory, CPU, thermal, source, display, decoder, and playback conditions
+- Reusable progressive compatibility cache with validated atomic segment promotion
+- Dolby Vision Profile 5 stream-driven reshape support in the compatibility decoder path
+
+### Changed
+
+- Progressive segments now use independently playable MP4 containers for consistent parsing across Android versions
+- Replay cache discovery runs independently of library and thumbnail work
+- Progressive generation resumes at the safest quality tier already proven by cached segments
+- Original audio remains active while full-file compatibility video is prepared
+- Removed a redundant metadata-only native FFmpeg/OpenSSL bundle, reducing the arm64 release from about 26 MB to about 14 MB without removing playback codecs
+
+### Fixed
+
+- Android 11 release crash caused by R8 merging an Android 12 media-metrics signature into a pre-Android-12 class-loading path
+- Blank replay caused by completed progressive fragments being rejected or delayed during cache discovery
+- Repeated replay regeneration at an unnecessarily high compatibility tier
+- 480p30 being treated as if the final 480p24 recovery tier had already been measured
+
 ## 9.2 - 2026-03-11
 
 ### Added

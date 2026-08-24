@@ -658,12 +658,6 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             }
         }
 
-        // FFmpeg remains a fallback for metadata Media3/platform extractors cannot resolve. It is
-        // kept out of normal row binding because some files trigger native work/crashes there.
-        if (allowFfmpegFallback && shouldUseFfmpegFallback(videoFile, snapshot)) {
-            fillUnknownsWithFfmpeg(videoFile, snapshot);
-        }
-
         return snapshot;
     }
 
@@ -826,108 +820,6 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                         .toUpperCase(Locale.US)
                         : ext;
         }
-    }
-
-    private void fillUnknownsWithFfmpeg(VideoFile videoFile, MediaInfoSnapshot snapshot) {
-        wseemann.media.FFmpegMediaMetadataRetriever ff =
-                new wseemann.media.FFmpegMediaMetadataRetriever();
-        try {
-            ff.setDataSource(context, videoFile.getContentUri());
-
-            // Audio codec
-            if ("Unknown".equals(snapshot.audioCodecLabel)
-                    || snapshot.audioCodecLabel.contains("unsupported")
-                    || snapshot.audioCodecLabel.contains("parser")
-                    || snapshot.audioCodecLabel.contains("MKV")) {
-                String codec = ff.extractMetadata(
-                        wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_AUDIO_CODEC);
-                if (codec != null && !codec.isEmpty()) {
-                    snapshot.audioCodecLabel = codec.toUpperCase(Locale.US);
-
-                    List<String> parts = new ArrayList<>();
-                    parts.add(codec.toUpperCase(Locale.US));
-                    if (snapshot.primaryAudioChannels   > 0) parts.add(snapshot.primaryAudioChannels   + " ch");
-                    if (snapshot.primaryAudioSampleRate > 0) parts.add(snapshot.primaryAudioSampleRate + " Hz");
-                    String enriched = TextUtils.join(" • ", parts);
-
-                    if (snapshot.allAudioTrackDetails.size() > 1) {
-                        snapshot.allAudioTrackDetails.set(0, enriched);
-                        StringBuilder sb = new StringBuilder();
-                        for (int i = 0; i < snapshot.allAudioTrackDetails.size(); i++) {
-                            sb.append("Track ").append(i + 1).append(": ")
-                                    .append(snapshot.allAudioTrackDetails.get(i));
-                            if (i < snapshot.allAudioTrackDetails.size() - 1) sb.append("\n");
-                        }
-                        snapshot.audioDetailsLabel = sb.toString();
-                    } else {
-                        snapshot.audioDetailsLabel = enriched;
-                    }
-                }
-            }
-
-            // Frame rate
-            if ("Unknown".equals(snapshot.frameRateLabel)) {
-                String fps = ff.extractMetadata(
-                        wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_FRAMERATE);
-                if (fps != null && !fps.isEmpty()) {
-                    try {
-                        if (fps.contains("/")) {
-                            String[] p = fps.split("/");
-                            float f = Float.parseFloat(p[0]) / Float.parseFloat(p[1]);
-                            snapshot.frameRateLabel = String.format(Locale.US, "%.2f fps", f);
-                        } else {
-                            snapshot.frameRateLabel = fps + " fps";
-                        }
-                    } catch (Exception ignored) {}
-                }
-            }
-
-            // Video codec fallback
-            if ("Unknown".equals(snapshot.videoCodecLabel)) {
-                String codec = ff.extractMetadata(
-                        wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_CODEC);
-                if (codec != null && !codec.isEmpty()) {
-                    snapshot.videoCodecLabel = codec.toUpperCase(Locale.US);
-                }
-            }
-
-        } catch (Exception e) {
-            Log.e("VideoAdapter", "FFmpeg metadata failed", e);
-        } finally {
-            try { ff.release(); } catch (Exception ignored) {}
-        }
-    }
-
-    private boolean shouldUseFfmpegFallback(VideoFile videoFile, MediaInfoSnapshot snapshot) {
-        String container = snapshot.containerLabel != null
-                ? snapshot.containerLabel.toUpperCase(Locale.US) : "";
-        String lowerName = videoFile.getName() != null
-                ? videoFile.getName().toLowerCase(Locale.US) : "";
-        String codec = snapshot.audioCodecLabel != null
-                ? snapshot.audioCodecLabel.toLowerCase(Locale.US) : "";
-
-        // Phone-recorded MP4/3GP files are the crash-prone path in logcat; skip FFmpeg there.
-        if ("MP4".equals(container) || "3GP".equals(container)) {
-            return lowerName.contains("eac3")
-                    || lowerName.contains("ec3")
-                    || lowerName.contains("ac3")
-                    || lowerName.contains("dts")
-                    || lowerName.contains("truehd");
-        }
-
-        if ("MKV".equals(container) || "WEBM".equals(container)) {
-            return true;
-        }
-
-        return "unknown".equals(codec)
-                || codec.contains("unsupported")
-                || codec.contains("parser")
-                || codec.contains("mkv")
-                || lowerName.contains("eac3")
-                || lowerName.contains("ec3")
-                || lowerName.contains("ac3")
-                || lowerName.contains("dts")
-                || lowerName.contains("truehd");
     }
 
     private String prettifyCodec(String mime) {
