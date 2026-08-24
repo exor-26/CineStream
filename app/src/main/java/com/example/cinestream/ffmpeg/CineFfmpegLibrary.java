@@ -4,6 +4,8 @@ import androidx.annotation.Nullable;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
 
+import java.util.Locale;
+
 /** Loads CineStream's minimal FFmpeg video decoder build and reports supported codecs. */
 @UnstableApi
 public final class CineFfmpegLibrary {
@@ -47,6 +49,24 @@ public final class CineFfmpegLibrary {
     public static boolean supportsTransformerMimeType(@Nullable String mimeType) {
         String codecName = codecNameForTransformerMimeType(mimeType);
         return codecName != null && isAvailable() && nativeHasDecoder(codecName);
+    }
+
+    /** Identifies Dolby Vision by either Media3 MIME or the ISO BMFF sample entry. */
+    public static boolean isDolbyVisionFormat(
+            @Nullable String mimeType,
+            @Nullable String codecs
+    ) {
+        if (MimeTypes.VIDEO_DOLBY_VISION.equals(mimeType)) {
+            return true;
+        }
+        if (codecs == null) {
+            return false;
+        }
+        String normalized = codecs.trim().toLowerCase(Locale.US);
+        return normalized.startsWith("dvhe")
+                || normalized.startsWith("dvh1")
+                || normalized.startsWith("dvav")
+                || normalized.startsWith("dva1");
     }
 
     @Nullable

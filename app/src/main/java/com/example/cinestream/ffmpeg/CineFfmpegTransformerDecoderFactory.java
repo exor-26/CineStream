@@ -7,6 +7,7 @@ import android.view.Surface;
 
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
+import androidx.media3.common.ColorInfo;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
@@ -190,10 +191,18 @@ public final class CineFfmpegTransformerDecoderFactory implements Codec.DecoderF
             this.outputSurface = outputSurface;
             outputWidth = requestedOutputWidth > 0 ? requestedOutputWidth : format.width;
             outputHeight = requestedOutputHeight > 0 ? requestedOutputHeight : format.height;
-            outputFormat = format.buildUpon()
+            Format.Builder outputFormatBuilder = format.buildUpon()
                     .setWidth(outputWidth)
-                    .setHeight(outputHeight)
-                    .build();
+                    .setHeight(outputHeight);
+            if (CineFfmpegLibrary.isDolbyVisionFormat(
+                    format.sampleMimeType,
+                    format.codecs
+            )) {
+                // Native GLES has already applied RPU reshape and explicit SDR tone/gamut mapping.
+                // Marking this SDR prevents Media3 from applying a second HDR transform.
+                outputFormatBuilder.setColorInfo(ColorInfo.SRGB_BT709_FULL);
+            }
+            outputFormat = outputFormatBuilder.build();
             int inputBufferSize = format.maxInputSize != Format.NO_VALUE
                     ? format.maxInputSize
                     : DEFAULT_INPUT_BUFFER_SIZE;

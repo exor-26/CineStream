@@ -64,6 +64,12 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
         if (mimeType == null || !MimeTypes.isVideo(mimeType)) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE);
         }
+        // Dolby Vision RPU reshaping is intentionally performed only by the offline
+        // compatibility path. Direct realtime base-layer rendering can otherwise produce a
+        // black or color-invalid Profile 5 picture before the governor has time to intervene.
+        if (CineFfmpegLibrary.isDolbyVisionFormat(mimeType, format.codecs)) {
+            return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE);
+        }
         // Do not load the native FFmpeg library while Media3 is merely probing renderers. The
         // library is part of this APK and is verified when createDecoder() is actually selected.
         if (!CineFfmpegLibrary.isDeclaredVideoMimeType(mimeType)) {

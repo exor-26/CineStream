@@ -834,6 +834,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 failedVideo.height,
                 failedVideo.frameRate,
                 failedVideo.sampleMimeType,
+                failedVideo.codecs,
                 compatibilityCeiling,
                 new ProgressiveCompatibilityManager.Listener() {
                     @Override
@@ -954,6 +955,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 failedVideo.width,
                 failedVideo.height,
                 failedVideo.frameRate,
+                failedVideo.sampleMimeType,
+                failedVideo.codecs,
                 compatibilityCeiling,
                 new CompatibilityVideoTranscoder.Callback() {
                     @Override
@@ -1316,6 +1319,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
         if (!decoderMode.preferSoftwareVideo
                 && !softwareVideoRecoveryAttempted
+                && !CineFfmpegLibrary.isDolbyVisionFormat(
+                format.sampleMimeType,
+                format.codecs
+        )
                 && CineFfmpegLibrary.isDeclaredVideoMimeType(format.sampleMimeType)) {
             softwareVideoRecoveryAttempted = true;
             hardwareVideoFailureObserved = true;

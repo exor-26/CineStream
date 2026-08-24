@@ -92,7 +92,12 @@ public final class PlaybackEnginePolicy {
             return false;
         }
         Format format = ((ExoPlaybackException) error).rendererFormat;
-        return format != null && hasBundledSoftwareVideoDecoder(format.sampleMimeType);
+        return format != null
+                && !CineFfmpegLibrary.isDolbyVisionFormat(
+                format.sampleMimeType,
+                format.codecs
+        )
+                && hasBundledSoftwareVideoDecoder(format.sampleMimeType);
     }
 
     static boolean isDecoderFailure(PlaybackException error) {

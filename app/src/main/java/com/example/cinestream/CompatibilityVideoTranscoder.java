@@ -12,6 +12,7 @@ import android.os.Build;
 import android.provider.MediaStore;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
 import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
@@ -29,6 +30,7 @@ import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 
+import com.example.cinestream.ffmpeg.CineFfmpegLibrary;
 import com.example.cinestream.ffmpeg.CineFfmpegTransformerDecoderFactory;
 
 import java.io.File;
@@ -126,7 +128,8 @@ final class CompatibilityVideoTranscoder {
                 String sourceKey,
                 List<CompatibilityVideoPolicy.Target> targets,
                 Session session,
-                long durationMs
+                long durationMs,
+                boolean forceFfmpegDecoder
         ) {
             this.context = context;
             this.sourceUri = sourceUri;
@@ -137,6 +140,7 @@ final class CompatibilityVideoTranscoder {
             this.targets = targets;
             this.session = session;
             this.durationMs = durationMs;
+            this.forceFfmpegDecoder = forceFfmpegDecoder;
         }
 
         void startNext() {
@@ -310,6 +314,8 @@ final class CompatibilityVideoTranscoder {
                 sourceHeight,
                 sourceFrameRate,
                 null,
+                null,
+                null,
                 callback
         );
     }
@@ -320,6 +326,30 @@ final class CompatibilityVideoTranscoder {
             int sourceWidth,
             int sourceHeight,
             float sourceFrameRate,
+            CompatibilityVideoPolicy.Target ceiling,
+            Callback callback
+    ) {
+        return start(
+                context,
+                sourceUri,
+                sourceWidth,
+                sourceHeight,
+                sourceFrameRate,
+                null,
+                null,
+                ceiling,
+                callback
+        );
+    }
+
+    static Session start(
+            Context context,
+            Uri sourceUri,
+            int sourceWidth,
+            int sourceHeight,
+            float sourceFrameRate,
+            @Nullable String sourceMimeType,
+            @Nullable String sourceCodecs,
             CompatibilityVideoPolicy.Target ceiling,
             Callback callback
     ) {
@@ -371,7 +401,8 @@ final class CompatibilityVideoTranscoder {
                 sourceKey,
                 targets,
                 session,
-                durationMs
+                durationMs,
+                CineFfmpegLibrary.isDolbyVisionFormat(sourceMimeType, sourceCodecs)
         ).startNext();
         return session.isFinished() ? null : session;
     }

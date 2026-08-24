@@ -6,8 +6,10 @@ import androidx.media3.common.C;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 public class CineFfmpegLibraryTest {
 
@@ -89,6 +91,26 @@ public class CineFfmpegLibraryTest {
         assertEquals("h264",
                 CineFfmpegLibrary.codecNameForTransformerMimeType(MimeTypes.VIDEO_H264));
         assertNull(CineFfmpegLibrary.codecNameForTransformerMimeType("video/x-unknown"));
+    }
+
+    @Test
+    public void dolbyVisionDetectionUsesStreamFormatNotDeviceIdentity() {
+        assertTrue(CineFfmpegLibrary.isDolbyVisionFormat(
+                MimeTypes.VIDEO_DOLBY_VISION,
+                null
+        ));
+        assertTrue(CineFfmpegLibrary.isDolbyVisionFormat(
+                MimeTypes.VIDEO_H265,
+                "dvh1.05.06"
+        ));
+        assertTrue(CineFfmpegLibrary.isDolbyVisionFormat(
+                MimeTypes.VIDEO_H265,
+                "DVHE.08.07"
+        ));
+        assertFalse(CineFfmpegLibrary.isDolbyVisionFormat(
+                MimeTypes.VIDEO_H265,
+                "hvc1.2.4.L153.B0"
+        ));
     }
 
     @Test

@@ -105,6 +105,7 @@ final class ProgressiveCompatibilityManager {
         private final File cacheDir;
         private final List<CompatibilityVideoPolicy.Target> targets;
         private final VideoResourceGovernor.Tier governorCeiling;
+        private final boolean streamRequiresFfmpegDecoder;
         private final ProgressiveCompatibilitySessionRegistry.Lease lease;
         private final List<Listener> listeners = new ArrayList<>();
         private final List<Segment> segments = new ArrayList<>();
@@ -129,6 +130,7 @@ final class ProgressiveCompatibilityManager {
                 int sourceHeight,
                 float sourceFrameRate,
                 @Nullable String sourceMimeType,
+                @Nullable String sourceCodecs,
                 long sourceDurationMs,
                 File cacheDir,
                 List<CompatibilityVideoPolicy.Target> targets,
@@ -141,6 +143,11 @@ final class ProgressiveCompatibilityManager {
             this.sourceHeight = sourceHeight;
             this.sourceFrameRate = sourceFrameRate;
             this.sourceMimeType = sourceMimeType;
+            streamRequiresFfmpegDecoder = CineFfmpegLibrary.isDolbyVisionFormat(
+                    sourceMimeType,
+                    sourceCodecs
+            );
+            forceFfmpegDecoder = streamRequiresFfmpegDecoder;
             this.sourceDurationMs = sourceDurationMs;
             this.cacheDir = cacheDir;
             this.targets = targets;
@@ -437,7 +444,7 @@ final class ProgressiveCompatibilityManager {
             nextSegmentIndex++;
             if (!fromCache) {
                 generatedAny = true;
-                forceFfmpegDecoder = false;
+                forceFfmpegDecoder = streamRequiresFfmpegDecoder;
                 double ratio = exportElapsedMs > 0L
                         ? (double) segment.window.durationMs() / exportElapsedMs
                         : Double.POSITIVE_INFINITY;
@@ -499,7 +506,7 @@ final class ProgressiveCompatibilityManager {
                 startNextSegment();
                 return;
             }
-            forceFfmpegDecoder = false;
+            forceFfmpegDecoder = streamRequiresFfmpegDecoder;
             if (targetIndex + 1 < targets.size()) {
                 targetIndex++;
                 consecutiveFastSegments = 0;
@@ -587,6 +594,7 @@ final class ProgressiveCompatibilityManager {
             int sourceHeight,
             float sourceFrameRate,
             @Nullable String sourceMimeType,
+            @Nullable String sourceCodecs,
             @Nullable CompatibilityVideoPolicy.Target ceiling,
             Listener listener
     ) {
@@ -636,6 +644,7 @@ final class ProgressiveCompatibilityManager {
                 sourceHeight,
                 sourceFrameRate,
                 sourceMimeType,
+                sourceCodecs,
                 CompatibilityVideoTranscoder.readDurationMs(context, sourceUri),
                 cacheDir,
                 targets,

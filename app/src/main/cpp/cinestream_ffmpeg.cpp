@@ -7,6 +7,7 @@
 #include <GLES3/gl3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -17,8 +18,10 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
+#include <libavutil/dovi_meta.h>
 #include <libavutil/frame.h>
 #include <libavutil/pixdesc.h>
+#include <libavutil/rational.h>
 #include <libswscale/swscale.h>
 }
 
@@ -53,6 +56,8 @@ struct ProgramState {
     GLint colorMatrix = -1;
     GLint offsets = -1;
     GLint rotation = -1;
+    GLint doviActive = -1;
+    GLint doviDataTexture = -1;
 };
 
 struct DecoderContext {
@@ -79,7 +84,9 @@ struct DecoderContext {
     ProgramState program8;
     ProgramState program10;
     GLuint textures[3] = {0, 0, 0};
+    GLuint doviDataTexture = 0;
     GLuint vertexBuffer = 0;
+    bool doviReshapeLogged = false;
 };
 
 const char* kVertexShader = R"glsl(#version 300 es
@@ -129,7 +136,31 @@ uniform usampler2D uTex;
 uniform usampler2D vTex;
 uniform mat3 uColorMatrix;
 uniform vec3 uOffsets;
+uniform int uDoviActive;
+uniform sampler2D uDoviDataTexture;
 out vec4 outColor;
+
+const int DOVI_TEXTURE_WIDTH = 16;
+const int DOVI_HEADER = 0;
+const int DOVI_NONLINEAR_OFFSET = 1;
+const int DOVI_NONLINEAR_MATRIX = 2;
+const int DOVI_LMS_TO_RGB = 5;
+const int DOVI_PIVOTS = 8;
+const int DOVI_COEFFS = 15;
+const int DOVI_MMR = 39;
+
+vec4 doviData(int index) {
+    return texelFetch(
+        uDoviDataTexture,
+        ivec2(index % DOVI_TEXTURE_WIDTH, index / DOVI_TEXTURE_WIDTH),
+        0
+    );
+}
+
+float doviScalar(int start, int index) {
+    vec4 values = doviData(start + index / 4);
+    return values[index % 4];
+}
 
 float sample10(usampler2D tex, vec2 uv) {
     ivec2 size = textureSize(tex, 0);
@@ -148,13 +179,140 @@ float sample10(usampler2D tex, vec2 uv) {
     return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y) / 1023.0;
 }
 
+float doviMmr(vec4 coeffs, vec3 sig) {
+    int idx = int(coeffs.y + 0.5);
+    int order = int(coeffs.w + 0.5);
+    vec4 sigX = vec4(
+        sig.x * sig.y,
+        sig.x * sig.z,
+        sig.y * sig.z,
+        sig.x * sig.y * sig.z
+    );
+    float value = coeffs.x;
+    value += dot(doviData(DOVI_MMR + idx).xyz, sig);
+    value += dot(doviData(DOVI_MMR + idx + 1), sigX);
+    if (order >= 2) {
+        vec3 sig2 = sig * sig;
+        vec4 sigX2 = sigX * sigX;
+        value += dot(doviData(DOVI_MMR + idx + 2).xyz, sig2);
+        value += dot(doviData(DOVI_MMR + idx + 3), sigX2);
+        if (order >= 3) {
+            value += dot(doviData(DOVI_MMR + idx + 4).xyz, sig2 * sig);
+            value += dot(doviData(DOVI_MMR + idx + 5), sigX2 * sigX);
+        }
+    }
+    return value;
+}
+
+float doviReshape(int component, vec3 sig) {
+    int count = int(doviData(DOVI_HEADER)[component] + 0.5);
+    if (count < 2) {
+        return sig[component];
+    }
+    int pivotBase = component * 9;
+    int pieceBase = component * 8;
+    float source = sig[component];
+    int piece = 0;
+    for (int i = 1; i < 8; i++) {
+        if (i < count - 1 && source >= doviScalar(DOVI_PIVOTS, pivotBase + i)) {
+            piece = i;
+        }
+    }
+    vec4 coeffs = doviData(DOVI_COEFFS + pieceBase + piece);
+    float value = coeffs.w < 0.5
+        ? (coeffs.z * source + coeffs.y) * source + coeffs.x
+        : doviMmr(coeffs, sig);
+    return clamp(
+        value,
+        doviScalar(DOVI_PIVOTS, pivotBase),
+        doviScalar(DOVI_PIVOTS, pivotBase + count - 1)
+    );
+}
+
+vec3 pqEotf(vec3 signal) {
+    const float m1 = 0.1593017578125;
+    const float m2 = 78.84375;
+    const float c1 = 0.8359375;
+    const float c2 = 18.8515625;
+    const float c3 = 18.6875;
+    vec3 p = pow(max(signal, vec3(0.0)), vec3(1.0 / m2));
+    vec3 numerator = max(p - vec3(c1), vec3(0.0));
+    vec3 denominator = max(vec3(c2) - vec3(c3) * p, vec3(1e-6));
+    return pow(numerator / denominator, vec3(1.0 / m1));
+}
+
+vec3 linearToSrgb(vec3 linearColor) {
+    vec3 safe = max(linearColor, vec3(0.0));
+    vec3 low = 12.92 * safe;
+    vec3 high = 1.055 * pow(safe, vec3(1.0 / 2.4)) - vec3(0.055);
+    return mix(low, high, step(vec3(0.0031308), safe));
+}
+
+vec3 doviToSdr(vec3 reshaped) {
+    mat3 nonlinearMatrix = mat3(
+        doviData(DOVI_NONLINEAR_MATRIX).xyz,
+        doviData(DOVI_NONLINEAR_MATRIX + 1).xyz,
+        doviData(DOVI_NONLINEAR_MATRIX + 2).xyz
+    );
+    mat3 lmsToRgb = mat3(
+        doviData(DOVI_LMS_TO_RGB).xyz,
+        doviData(DOVI_LMS_TO_RGB + 1).xyz,
+        doviData(DOVI_LMS_TO_RGB + 2).xyz
+    );
+    vec3 nonlinearRgb = nonlinearMatrix
+        * (reshaped - doviData(DOVI_NONLINEAR_OFFSET).xyz);
+    vec3 linearBt2020 = max(lmsToRgb * pqEotf(nonlinearRgb), vec3(0.0));
+
+    const float targetPeakNits = 203.0;
+    float sourcePeakNits = clamp(
+        doviData(DOVI_HEADER).w,
+        targetPeakNits,
+        10000.0
+    );
+    float luminanceNits = 10000.0
+        * dot(linearBt2020, vec3(0.2627, 0.6780, 0.0593));
+    float normalizedLuminance = max(luminanceNits / targetPeakNits, 0.0);
+    float white = max(sourcePeakNits / targetPeakNits, 1.0);
+    float mappedLuminance = normalizedLuminance
+        * (1.0 + normalizedLuminance / (white * white))
+        / (1.0 + normalizedLuminance);
+    float luminanceScale = normalizedLuminance > 1e-6
+        ? mappedLuminance / normalizedLuminance
+        : 0.0;
+    vec3 mappedBt2020 = linearBt2020
+        * (10000.0 / targetPeakNits)
+        * luminanceScale;
+
+    const mat3 bt2020ToBt709 = mat3(
+         1.660491, -0.124550, -0.018151,
+        -0.587641,  1.132900, -0.100579,
+        -0.072850, -0.008349,  1.118730
+    );
+    vec3 linearBt709 = max(bt2020ToBt709 * mappedBt2020, vec3(0.0));
+    float maximum = max(max(linearBt709.r, linearBt709.g), linearBt709.b);
+    if (maximum > 1.0) {
+        linearBt709 /= maximum;
+    }
+    return clamp(linearToSrgb(linearBt709), 0.0, 1.0);
+}
+
 void main() {
-    vec3 yuv = vec3(
+    vec3 signal = vec3(
         sample10(yTex, vTexCoord),
         sample10(uTex, vTexCoord),
         sample10(vTex, vTexCoord)
-    ) + uOffsets;
-    outColor = vec4(uColorMatrix * yuv, 1.0);
+    );
+    if (uDoviActive != 0) {
+        vec3 clamped = clamp(signal, 0.0, 1.0);
+        vec3 reshaped = vec3(
+            doviReshape(0, clamped),
+            doviReshape(1, clamped),
+            doviReshape(2, clamped)
+        );
+        outColor = vec4(doviToSdr(reshaped), 1.0);
+    } else {
+        outColor = vec4(uColorMatrix * (signal + uOffsets), 1.0);
+    }
 }
 )glsl";
 
@@ -188,6 +346,253 @@ constexpr float kFull2020[9] = {
         0.0f, -0.164553f, 1.8814f,
         1.4746f, -0.571353f, 0.0f,
 };
+
+constexpr int kDoviComponents = 3;
+constexpr int kDoviMaxPivots = AV_DOVI_MAX_PIECES + 1;
+constexpr int kDoviMaxPieces = AV_DOVI_MAX_PIECES;
+constexpr int kDoviMaxMmrVec4 =
+        kDoviComponents * kDoviMaxPieces * 3 * 2;
+constexpr int kDoviTextureWidth = 16;
+constexpr int kDoviTextureHeight = 12;
+constexpr int kDoviTextureTexels = kDoviTextureWidth * kDoviTextureHeight;
+constexpr int kDoviHeaderTexel = 0;
+constexpr int kDoviNonlinearOffsetTexel = 1;
+constexpr int kDoviNonlinearMatrixTexel = 2;
+constexpr int kDoviLmsToRgbTexel = 5;
+constexpr int kDoviPivotsTexel = 8;
+constexpr int kDoviCoeffsTexel = 15;
+constexpr int kDoviMmrTexel = 39;
+static_assert(
+        kDoviMmrTexel + kDoviMaxMmrVec4 <= kDoviTextureTexels,
+        "Dolby Vision metadata texture layout is too small"
+);
+
+struct DoviUniformData {
+    GLint pivotCounts[kDoviComponents] = {0, 0, 0};
+    GLfloat pivots[kDoviComponents * kDoviMaxPivots] = {};
+    GLfloat coeffs[kDoviComponents * kDoviMaxPieces * 4] = {};
+    GLfloat mmr[kDoviMaxMmrVec4 * 4] = {};
+    GLfloat nonlinearOffset[3] = {};
+    GLfloat nonlinearMatrix[9] = {};
+    GLfloat lmsToRgb[9] = {};
+    GLfloat sourcePeakNits = 1000.0f;
+};
+
+float rationalToFloat(AVRational value) {
+    return value.den != 0 ? static_cast<float>(av_q2d(value)) : 0.0f;
+}
+
+void storeColumnMajor(const float rowMajor[9], GLfloat output[9]) {
+    for (int row = 0; row < 3; row++) {
+        for (int column = 0; column < 3; column++) {
+            output[column * 3 + row] = rowMajor[row * 3 + column];
+        }
+    }
+}
+
+float pqCodeToNits(float pqCode) {
+    constexpr double m1 = 0.1593017578125;
+    constexpr double m2 = 78.84375;
+    constexpr double c1 = 0.8359375;
+    constexpr double c2 = 18.8515625;
+    constexpr double c3 = 18.6875;
+    double signal = std::clamp(static_cast<double>(pqCode), 0.0, 1.0);
+    double power = std::pow(signal, 1.0 / m2);
+    double denominator = std::max(c2 - c3 * power, 1e-9);
+    double linear = std::pow(std::max(power - c1, 0.0) / denominator, 1.0 / m1);
+    return static_cast<float>(10000.0 * linear);
+}
+
+bool extractDoviUniformData(const AVFrame* frame, DoviUniformData* output) {
+    const AVFrameSideData* sideData =
+            av_frame_get_side_data(frame, AV_FRAME_DATA_DOVI_METADATA);
+    if (sideData == nullptr
+            || sideData->data == nullptr
+            || sideData->size < sizeof(AVDOVIMetadata)) {
+        return false;
+    }
+
+    const auto* metadata = reinterpret_cast<const AVDOVIMetadata*>(sideData->data);
+    if (metadata->header_offset > sideData->size
+            || sideData->size - metadata->header_offset < sizeof(AVDOVIRpuDataHeader)
+            || metadata->mapping_offset > sideData->size
+            || sideData->size - metadata->mapping_offset < sizeof(AVDOVIDataMapping)
+            || metadata->color_offset > sideData->size
+            || sideData->size - metadata->color_offset < sizeof(AVDOVIColorMetadata)) {
+        return false;
+    }
+    const AVDOVIRpuDataHeader* header = av_dovi_get_header(metadata);
+    const AVDOVIDataMapping* mapping = av_dovi_get_mapping(metadata);
+    const AVDOVIColorMetadata* color = av_dovi_get_color(metadata);
+    if (header->bl_bit_depth < 8
+            || header->bl_bit_depth > 16
+            || header->coef_log2_denom > 31) {
+        return false;
+    }
+
+    float nonlinearRowMajor[9] = {};
+    float rgbToLms[9] = {};
+    float offsetScale = static_cast<float>(1ULL << header->bl_bit_depth)
+            / static_cast<float>((1ULL << header->bl_bit_depth) - 1ULL);
+    for (int i = 0; i < 3; i++) {
+        output->nonlinearOffset[i] =
+                rationalToFloat(color->ycc_to_rgb_offset[i]) * offsetScale;
+    }
+    for (int i = 0; i < 9; i++) {
+        nonlinearRowMajor[i] = rationalToFloat(color->ycc_to_rgb_matrix[i]);
+        rgbToLms[i] = rationalToFloat(color->rgb_to_lms_matrix[i]);
+    }
+    storeColumnMajor(nonlinearRowMajor, output->nonlinearMatrix);
+
+    constexpr float hpeLmsToBt2020[9] = {
+             3.06441879f, -2.16597676f,  0.10155818f,
+            -0.65612108f,  1.78554118f, -0.12943749f,
+             0.01736321f, -0.04725154f,  1.03004253f,
+    };
+    float combinedLmsToRgb[9] = {};
+    for (int row = 0; row < 3; row++) {
+        for (int column = 0; column < 3; column++) {
+            for (int k = 0; k < 3; k++) {
+                combinedLmsToRgb[row * 3 + column] +=
+                        hpeLmsToBt2020[row * 3 + k] * rgbToLms[k * 3 + column];
+            }
+        }
+    }
+    storeColumnMajor(combinedLmsToRgb, output->lmsToRgb);
+
+    const float pivotScale = 1.0f
+            / static_cast<float>((1ULL << header->bl_bit_depth) - 1ULL);
+    const float coefficientScale = 1.0f
+            / static_cast<float>(1ULL << header->coef_log2_denom);
+    int mmrIndex = 0;
+    for (int component = 0; component < kDoviComponents; component++) {
+        const AVDOVIReshapingCurve& curve = mapping->curves[component];
+        if (curve.num_pivots < 2 || curve.num_pivots > kDoviMaxPivots) {
+            return false;
+        }
+        output->pivotCounts[component] = curve.num_pivots;
+        int pivotBase = component * kDoviMaxPivots;
+        int pieceBase = component * kDoviMaxPieces;
+        for (int i = 0; i < curve.num_pivots; i++) {
+            output->pivots[pivotBase + i] = curve.pivots[i] * pivotScale;
+        }
+        for (int piece = 0; piece < curve.num_pivots - 1; piece++) {
+            GLfloat* packed = &output->coeffs[(pieceBase + piece) * 4];
+            if (curve.mapping_idc[piece] == AV_DOVI_MAPPING_POLYNOMIAL) {
+                packed[3] = 0.0f;
+                for (int coefficient = 0; coefficient < 3; coefficient++) {
+                    packed[coefficient] = coefficient <= curve.poly_order[piece]
+                            ? curve.poly_coef[piece][coefficient] * coefficientScale
+                            : 0.0f;
+                }
+            } else if (curve.mapping_idc[piece] == AV_DOVI_MAPPING_MMR) {
+                int order = curve.mmr_order[piece];
+                if (order < 1 || order > 3 || mmrIndex + order * 2 > kDoviMaxMmrVec4) {
+                    return false;
+                }
+                packed[0] = curve.mmr_constant[piece] * coefficientScale;
+                packed[1] = static_cast<float>(mmrIndex);
+                packed[3] = static_cast<float>(order);
+                for (int mmrOrder = 0; mmrOrder < order; mmrOrder++) {
+                    GLfloat* first = &output->mmr[mmrIndex * 4];
+                    GLfloat* second = &output->mmr[(mmrIndex + 1) * 4];
+                    first[0] = curve.mmr_coef[piece][mmrOrder][0] * coefficientScale;
+                    first[1] = curve.mmr_coef[piece][mmrOrder][1] * coefficientScale;
+                    first[2] = curve.mmr_coef[piece][mmrOrder][2] * coefficientScale;
+                    second[0] = curve.mmr_coef[piece][mmrOrder][3] * coefficientScale;
+                    second[1] = curve.mmr_coef[piece][mmrOrder][4] * coefficientScale;
+                    second[2] = curve.mmr_coef[piece][mmrOrder][5] * coefficientScale;
+                    second[3] = curve.mmr_coef[piece][mmrOrder][6] * coefficientScale;
+                    mmrIndex += 2;
+                }
+            } else {
+                return false;
+            }
+        }
+    }
+
+    float sourcePeak = pqCodeToNits(color->source_max_pq / 4095.0f);
+    output->sourcePeakNits = sourcePeak >= 100.0f ? sourcePeak : 1000.0f;
+    return true;
+}
+
+bool uploadDoviUniforms(
+        DecoderContext* context,
+        const ProgramState& program,
+        const AVFrame* frame,
+        int bitDepth
+) {
+    if (program.doviActive < 0
+            || program.doviDataTexture < 0
+            || context->doviDataTexture == 0
+            || bitDepth != 10) {
+        return false;
+    }
+    DoviUniformData metadata;
+    if (!extractDoviUniformData(frame, &metadata)) {
+        glUniform1i(program.doviActive, 0);
+        return false;
+    }
+
+    GLfloat packed[kDoviTextureTexels * 4] = {};
+    packed[kDoviHeaderTexel * 4] = static_cast<GLfloat>(metadata.pivotCounts[0]);
+    packed[kDoviHeaderTexel * 4 + 1] = static_cast<GLfloat>(metadata.pivotCounts[1]);
+    packed[kDoviHeaderTexel * 4 + 2] = static_cast<GLfloat>(metadata.pivotCounts[2]);
+    packed[kDoviHeaderTexel * 4 + 3] = metadata.sourcePeakNits;
+    std::copy_n(
+            metadata.nonlinearOffset,
+            3,
+            &packed[kDoviNonlinearOffsetTexel * 4]
+    );
+    for (int column = 0; column < 3; column++) {
+        std::copy_n(
+                &metadata.nonlinearMatrix[column * 3],
+                3,
+                &packed[(kDoviNonlinearMatrixTexel + column) * 4]
+        );
+        std::copy_n(
+                &metadata.lmsToRgb[column * 3],
+                3,
+                &packed[(kDoviLmsToRgbTexel + column) * 4]
+        );
+    }
+    std::copy_n(
+            metadata.pivots,
+            kDoviComponents * kDoviMaxPivots,
+            &packed[kDoviPivotsTexel * 4]
+    );
+    std::copy_n(
+            metadata.coeffs,
+            kDoviComponents * kDoviMaxPieces * 4,
+            &packed[kDoviCoeffsTexel * 4]
+    );
+    std::copy_n(
+            metadata.mmr,
+            kDoviMaxMmrVec4 * 4,
+            &packed[kDoviMmrTexel * 4]
+    );
+
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, context->doviDataTexture);
+    glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA32F,
+            kDoviTextureWidth,
+            kDoviTextureHeight,
+            0,
+            GL_RGBA,
+            GL_FLOAT,
+            packed
+    );
+    glUniform1i(program.doviDataTexture, 3);
+    glUniform1i(program.doviActive, 1);
+    if (!context->doviReshapeLogged) {
+        LOGI("Applying stream-driven Dolby Vision RPU reshape to SDR output");
+        context->doviReshapeLogged = true;
+    }
+    return true;
+}
 
 std::string jstringToString(JNIEnv* env, jstring value) {
     if (value == nullptr) {
@@ -257,6 +662,8 @@ ProgramState createProgram(const char* fragmentSource) {
     state.colorMatrix = glGetUniformLocation(state.id, "uColorMatrix");
     state.offsets = glGetUniformLocation(state.id, "uOffsets");
     state.rotation = glGetUniformLocation(state.id, "uRotation");
+    state.doviActive = glGetUniformLocation(state.id, "uDoviActive");
+    state.doviDataTexture = glGetUniformLocation(state.id, "uDoviDataTexture");
     return state;
 }
 
@@ -364,6 +771,12 @@ bool initializeGlObjects(DecoderContext* context) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
+    glGenTextures(1, &context->doviDataTexture);
+    glBindTexture(GL_TEXTURE_2D, context->doviDataTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     return glGetError() == GL_NO_ERROR;
 }
 
@@ -644,6 +1057,7 @@ bool renderFrame(
 
     ProgramState& program = bitDepth == 10 ? context->program10 : context->program8;
     glUseProgram(program.id);
+    uploadDoviUniforms(context, program, renderableFrame, bitDepth);
     const float* matrix = nullptr;
     float offsets[3] = {0.0f, 0.0f, 0.0f};
     chooseColorConversion(renderableFrame, bitDepth, &matrix, offsets);
@@ -776,6 +1190,9 @@ void releaseContext(DecoderContext* context) {
         );
         if (context->vertexBuffer != 0) glDeleteBuffers(1, &context->vertexBuffer);
         if (context->textures[0] != 0) glDeleteTextures(3, context->textures);
+        if (context->doviDataTexture != 0) {
+            glDeleteTextures(1, &context->doviDataTexture);
+        }
         if (context->program8.id != 0) glDeleteProgram(context->program8.id);
         if (context->program10.id != 0) glDeleteProgram(context->program10.id);
     }
