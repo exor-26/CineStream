@@ -44,6 +44,7 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
+import androidx.media3.exoplayer.source.ConcatenatingMediaSource;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.source.FilteringMediaSource;
 import androidx.media3.exoplayer.source.MediaSource;
@@ -99,6 +100,19 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private boolean softwareVideoRecoveryAttempted = false;
     private boolean hardwareVideoFailureObserved = false;
     private CompatibilityVideoTranscoder.Session compatibilityTranscodeSession;
+    private ProgressiveCompatibilityManager.Handle progressiveCompatibilityHandle;
+    private ConcatenatingMediaSource progressiveMediaSequence;
+    private final ArrayList<ProgressiveCompatibilityManager.Segment> progressiveSegments =
+            new ArrayList<>();
+    private ArrayList<MediaItem> progressiveOriginalItems;
+    private int progressiveOriginalIndex;
+    private int progressiveInsertIndex;
+    private boolean progressiveTrailingItemsAdded;
+    private long progressiveOriginalDurationMs;
+    private Uri progressiveOriginalUri;
+    private String progressivePlaybackKey;
+    private boolean progressivePlaybackActive;
+    private boolean progressiveFallbackStarted;
     private Uri compatibilityOriginalUri;
     private Uri compatibilityVideoUri;
     private String compatibilityPlaybackKey;
@@ -121,6 +135,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private Uri videoUri;
     private String playbackKey;
     private ArrayList<String> playlistTitles;
+    private int selectedAudioActionId = Integer.MIN_VALUE;
+    private int selectedSubtitleActionId = ACTION_SUBTITLE_OFF;
+    private boolean restoringTrackSelection;
 
     private float maxVolume;
     private float currentVolume;
@@ -177,6 +194,13 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 softwareRecoveryVideoFormat = null;
                 compatibilityCeiling = null;
                 governorHandoffStarted = false;
+                selectedAudioActionId = Integer.MIN_VALUE;
+                selectedSubtitleActionId = ACTION_SUBTITLE_OFF;
+                if (progressivePlaybackActive
+                        && progressivePlaybackKey != null
+                        && !progressivePlaybackKey.equals(playbackKey)) {
+                    clearProgressivePlaybackState();
+                }
                 if (decoderMode.preferSoftwareVideo) {
                     decoderMode = decoderMode.withoutSoftwareVideo();
                     String targetPlaybackKey = playbackKey;
@@ -197,7 +221,12 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     });
                 }
             }
-            if (transitionedUri != null
+            if (progressivePlaybackActive
+                    && progressivePlaybackKey != null
+                    && progressivePlaybackKey.equals(playbackKey)
+                    && progressiveOriginalUri != null) {
+                videoUri = progressiveOriginalUri;
+            } else if (transitionedUri != null
                     && compatibilityPlaybackKey != null
                     && compatibilityPlaybackKey.equals(playbackKey)
                     && compatibilityVideoUri != null
@@ -224,6 +253,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         @Override
         public void onTracksChanged(Tracks tracks) {
             assessSelectedVideoTrack(tracks);
+            restoreSelectedTracks(tracks);
         }
 
         @Override
@@ -730,6 +760,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private ArrayList<MediaItem> snapshotMediaItems() {
+        if (progressivePlaybackActive && progressiveOriginalItems != null) {
+            return new ArrayList<>(progressiveOriginalItems);
+        }
         ArrayList<MediaItem> items = new ArrayList<>();
         if (exoPlayer == null) {
             return items;
@@ -753,14 +786,131 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void startCompatibilityRecovery(Format failedVideo) {
+        if (videoUri == null || playbackKey == null || progressiveFallbackStarted) {
+            return;
+        }
+        if (progressiveCompatibilityHandle != null) {
+            return;
+        }
+
+        if (compatibilityCeiling == null && videoResourceMonitor != null) {
+            VideoResourceGovernor.Decision decision = VideoResourceGovernor.evaluate(
+                    videoResourceMonitor.capture(
+                            failedVideo,
+                            currentVideoAssessment,
+                            hardwareVideoFailureObserved
+                    ),
+                    null
+            );
+            compatibilityCeiling = decision.compatibilityCeiling(
+                    failedVideo.width,
+                    failedVideo.height,
+                    failedVideo.frameRate
+            );
+        }
+
+        final Uri sourceUri = videoUri;
+        final String sourceKey = playbackKey;
+        final ArrayList<MediaItem> recoveryItems = snapshotMediaItems();
+        final int recoveryIndex = progressivePlaybackActive
+                ? progressiveOriginalIndex
+                : (exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0);
+        final long recoveryPosition = currentLogicalPlaybackPosition();
+        final boolean recoveryPlayWhenReady = exoPlayer == null || exoPlayer.getPlayWhenReady();
+        if (recoveryItems.isEmpty()) {
+            recoveryItems.add(new MediaItem.Builder()
+                    .setUri(sourceUri)
+                    .setMediaId(sourceKey)
+                    .build());
+        }
+
+        decoderMode = decoderMode.withoutSoftwareVideo();
+        stopSoftwareObservation();
+        progressiveFallbackStarted = false;
+        progressiveCompatibilityHandle = ProgressiveCompatibilityManager.start(
+                this,
+                sourceUri,
+                failedVideo.width,
+                failedVideo.height,
+                failedVideo.frameRate,
+                failedVideo.sampleMimeType,
+                compatibilityCeiling,
+                new ProgressiveCompatibilityManager.Listener() {
+                    @Override
+                    public void onInitialSegments(
+                            List<ProgressiveCompatibilityManager.Segment> segments,
+                            boolean entirelyFromCache
+                    ) {
+                        if (isFinishing() || isDestroyed() || progressiveFallbackStarted) {
+                            return;
+                        }
+                        Log.i("ProgressiveCompatibility",
+                                "Starting from " + segments.size() + " validated segments"
+                                        + (entirelyFromCache ? " in cache" : ""));
+                        createPlayerWithProgressiveVideo(
+                                recoveryItems,
+                                recoveryIndex,
+                                recoveryPosition,
+                                recoveryPlayWhenReady,
+                                sourceUri,
+                                sourceKey,
+                                failedVideo,
+                                segments
+                        );
+                    }
+
+                    @Override
+                    public void onSegmentReady(ProgressiveCompatibilityManager.Segment segment) {
+                        if (!isFinishing() && !isDestroyed() && !progressiveFallbackStarted) {
+                            appendProgressiveSegment(segment, sourceUri, sourceKey);
+                        }
+                    }
+
+                    @Override
+                    public void onCompleted(
+                            List<ProgressiveCompatibilityManager.Segment> segments
+                    ) {
+                        finishProgressiveSequence();
+                        if (progressiveCompatibilityHandle != null) {
+                            progressiveCompatibilityHandle.detach();
+                            progressiveCompatibilityHandle = null;
+                        }
+                        Log.i("ProgressiveCompatibility",
+                                "Validated progressive cache is complete: " + segments.size());
+                    }
+
+                    @Override
+                    public void onFailed(String message, Throwable error) {
+                        if (progressiveFallbackStarted || isFinishing() || isDestroyed()) {
+                            return;
+                        }
+                        progressiveFallbackStarted = true;
+                        if (error != null) {
+                            Log.w("ProgressiveCompatibility", message, error);
+                        } else {
+                            Log.w("ProgressiveCompatibility", message);
+                        }
+                        if (progressiveCompatibilityHandle != null) {
+                            progressiveCompatibilityHandle.detach();
+                            progressiveCompatibilityHandle = null;
+                        }
+                        startFullFileCompatibilityRecovery(failedVideo);
+                    }
+                }
+        );
+    }
+
+    private void startFullFileCompatibilityRecovery(Format failedVideo) {
         if (videoUri == null || playbackKey == null) {
             GlassUi.showToast(this, "Unable to resolve the original video for compatibility mode.");
             return;
         }
 
         ArrayList<MediaItem> items = snapshotMediaItems();
-        int itemIndex = exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0;
-        long position = exoPlayer != null ? Math.max(0L, exoPlayer.getCurrentPosition()) : 0L;
+        int itemIndex = progressivePlaybackActive
+                ? progressiveOriginalIndex
+                : (exoPlayer != null ? exoPlayer.getCurrentMediaItemIndex() : 0);
+        long position = currentLogicalPlaybackPosition();
         boolean playWhenReady = exoPlayer == null || exoPlayer.getPlayWhenReady();
         Uri sourceUri = videoUri;
         String sourceKey = playbackKey;
@@ -796,6 +946,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
         decoderMode = decoderMode.withoutSoftwareVideo();
         stopSoftwareObservation();
+        clearProgressivePlaybackState();
         releasePlayerOnly();
         compatibilityTranscodeSession = CompatibilityVideoTranscoder.start(
                 this,
@@ -852,6 +1003,242 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     }
                 }
         );
+    }
+
+    private void createPlayerWithProgressiveVideo(
+            List<MediaItem> mediaItems,
+            int originalIndex,
+            long originalPositionMs,
+            boolean playWhenReady,
+            Uri originalUri,
+            String logicalPlaybackKey,
+            Format failedVideo,
+            List<ProgressiveCompatibilityManager.Segment> initialSegments
+    ) {
+        if (mediaItems == null || mediaItems.isEmpty() || initialSegments.isEmpty()) {
+            startFullFileCompatibilityRecovery(failedVideo);
+            return;
+        }
+
+        int safeOriginalIndex = Math.max(0, Math.min(originalIndex, mediaItems.size() - 1));
+        releasePlayerOnly();
+        progressiveOriginalItems = new ArrayList<>(mediaItems);
+        progressiveOriginalIndex = safeOriginalIndex;
+        progressiveOriginalUri = originalUri;
+        progressivePlaybackKey = logicalPlaybackKey;
+        progressiveOriginalDurationMs = CompatibilityVideoTranscoder.readDurationMs(
+                this,
+                originalUri
+        );
+        progressiveSegments.clear();
+        progressiveSegments.addAll(initialSegments);
+        progressiveTrailingItemsAdded = false;
+        progressivePlaybackActive = true;
+        compatibilityOriginalUri = originalUri;
+        compatibilityVideoUri = null;
+        compatibilityPlaybackKey = logicalPlaybackKey;
+        videoUri = originalUri;
+        playbackKey = logicalPlaybackKey;
+
+        initializePlayerShell();
+        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this);
+        ConcatenatingMediaSource sequence = new ConcatenatingMediaSource();
+        for (int i = 0; i < safeOriginalIndex; i++) {
+            sequence.addMediaSource(sourceFactory.createMediaSource(mediaItems.get(i)));
+        }
+        MediaItem originalItem = mediaItems.get(safeOriginalIndex);
+        for (ProgressiveCompatibilityManager.Segment segment : initialSegments) {
+            sequence.addMediaSource(buildProgressiveSegmentMediaSource(
+                    sourceFactory,
+                    originalItem,
+                    originalUri,
+                    logicalPlaybackKey,
+                    segment
+            ));
+        }
+        progressiveInsertIndex = safeOriginalIndex + initialSegments.size();
+        progressiveMediaSequence = sequence;
+        playerView.setShowMultiWindowTimeBar(mediaItems.size() == 1);
+
+        int segmentIndex = findProgressiveSegmentForPosition(originalPositionMs);
+        ProgressiveCompatibilityManager.Segment startSegment =
+                progressiveSegments.get(segmentIndex);
+        long positionInSegmentMs = Math.max(
+                0L,
+                Math.min(
+                        originalPositionMs - startSegment.window.startMs,
+                        Math.max(0L, startSegment.window.durationMs() - 1L)
+                )
+        );
+        exoPlayer.setMediaSource(sequence);
+        exoPlayer.seekTo(safeOriginalIndex + segmentIndex, positionInSegmentMs);
+        exoPlayer.prepare();
+        exoPlayer.setPlayWhenReady(playWhenReady);
+        applyVolumeBoost();
+        stopSoftwareObservation();
+    }
+
+    private MediaSource buildProgressiveSegmentMediaSource(
+            DefaultMediaSourceFactory sourceFactory,
+            MediaItem originalItem,
+            Uri originalUri,
+            String logicalPlaybackKey,
+            ProgressiveCompatibilityManager.Segment segment
+    ) {
+        MediaItem videoItem = new MediaItem.Builder()
+                .setUri(Uri.fromFile(segment.file))
+                .setMediaId(logicalPlaybackKey)
+                .build();
+        MediaSource videoSource = new FilteringMediaSource(
+                sourceFactory.createMediaSource(videoItem),
+                C.TRACK_TYPE_VIDEO
+        );
+
+        MediaItem originalClip = originalItem.buildUpon()
+                .setUri(originalUri)
+                .setMediaId(logicalPlaybackKey)
+                .setClippingConfiguration(
+                        new MediaItem.ClippingConfiguration.Builder()
+                                .setStartPositionMs(segment.window.startMs)
+                                .setEndPositionMs(segment.window.endMs)
+                                .build()
+                )
+                .build();
+        Set<Integer> originalTrackTypes = new HashSet<>();
+        originalTrackTypes.add(C.TRACK_TYPE_AUDIO);
+        originalTrackTypes.add(C.TRACK_TYPE_TEXT);
+        originalTrackTypes.add(C.TRACK_TYPE_METADATA);
+        MediaSource originalNonVideoSource = new FilteringMediaSource(
+                sourceFactory.createMediaSource(originalClip),
+                originalTrackTypes
+        );
+
+        return new MergingMediaSource(
+                true,
+                true,
+                videoSource,
+                originalNonVideoSource
+        );
+    }
+
+    private void appendProgressiveSegment(
+            ProgressiveCompatibilityManager.Segment segment,
+            Uri originalUri,
+            String logicalPlaybackKey
+    ) {
+        if (!progressivePlaybackActive
+                || progressiveMediaSequence == null
+                || progressiveOriginalItems == null
+                || progressivePlaybackKey == null
+                || !progressivePlaybackKey.equals(logicalPlaybackKey)) {
+            return;
+        }
+        if (!progressiveSegments.isEmpty()) {
+            ProgressiveCompatibilityManager.Segment previous =
+                    progressiveSegments.get(progressiveSegments.size() - 1);
+            if (segment.window.index <= previous.window.index) {
+                return;
+            }
+        }
+        MediaItem originalItem = progressiveOriginalItems.get(progressiveOriginalIndex);
+        MediaSource mediaSource = buildProgressiveSegmentMediaSource(
+                new DefaultMediaSourceFactory(this),
+                originalItem,
+                originalUri,
+                logicalPlaybackKey,
+                segment
+        );
+        boolean resumeFromExhaustedBuffer = exoPlayer != null
+                && exoPlayer.getPlaybackState() == Player.STATE_ENDED;
+        int insertedIndex = progressiveInsertIndex;
+        progressiveSegments.add(segment);
+        progressiveMediaSequence.addMediaSource(progressiveInsertIndex, mediaSource);
+        progressiveInsertIndex++;
+        if (resumeFromExhaustedBuffer && exoPlayer != null) {
+            exoPlayer.seekTo(insertedIndex, 0L);
+            exoPlayer.prepare();
+            exoPlayer.setPlayWhenReady(true);
+        }
+    }
+
+    private void finishProgressiveSequence() {
+        if (!progressivePlaybackActive
+                || progressiveTrailingItemsAdded
+                || progressiveMediaSequence == null
+                || progressiveOriginalItems == null) {
+            return;
+        }
+        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this);
+        boolean hasTrailingItems = progressiveOriginalIndex + 1 < progressiveOriginalItems.size();
+        boolean resumeFromCompletedVideo = hasTrailingItems
+                && exoPlayer != null
+                && exoPlayer.getPlaybackState() == Player.STATE_ENDED;
+        int firstTrailingIndex = progressiveInsertIndex;
+        for (int i = progressiveOriginalIndex + 1; i < progressiveOriginalItems.size(); i++) {
+            progressiveMediaSequence.addMediaSource(
+                    sourceFactory.createMediaSource(progressiveOriginalItems.get(i))
+            );
+        }
+        progressiveTrailingItemsAdded = true;
+        if (resumeFromCompletedVideo && exoPlayer != null) {
+            exoPlayer.seekTo(firstTrailingIndex, C.TIME_UNSET);
+            exoPlayer.prepare();
+            exoPlayer.setPlayWhenReady(true);
+        }
+    }
+
+    private int findProgressiveSegmentForPosition(long positionMs) {
+        long safePositionMs = Math.max(0L, positionMs);
+        for (int i = 0; i < progressiveSegments.size(); i++) {
+            ProgressiveCompatibilityManager.Segment segment = progressiveSegments.get(i);
+            if (safePositionMs < segment.window.endMs) {
+                return i;
+            }
+        }
+        return Math.max(0, progressiveSegments.size() - 1);
+    }
+
+    private long currentLogicalPlaybackPosition() {
+        if (exoPlayer == null) {
+            return 0L;
+        }
+        if (!progressivePlaybackActive) {
+            return Math.max(0L, exoPlayer.getCurrentPosition());
+        }
+        int segmentIndex = exoPlayer.getCurrentMediaItemIndex() - progressiveOriginalIndex;
+        if (segmentIndex >= 0 && segmentIndex < progressiveSegments.size()) {
+            return progressiveSegments.get(segmentIndex).window.startMs
+                    + Math.max(0L, exoPlayer.getCurrentPosition());
+        }
+        return Math.max(0L, exoPlayer.getCurrentPosition());
+    }
+
+    private long currentLogicalDuration() {
+        if (progressivePlaybackActive && progressiveOriginalDurationMs > 0L) {
+            return progressiveOriginalDurationMs;
+        }
+        return exoPlayer != null ? exoPlayer.getDuration() : C.TIME_UNSET;
+    }
+
+    private void clearProgressivePlaybackState() {
+        if (progressiveCompatibilityHandle != null) {
+            progressiveCompatibilityHandle.detach();
+            progressiveCompatibilityHandle = null;
+        }
+        progressiveMediaSequence = null;
+        progressiveSegments.clear();
+        progressiveOriginalItems = null;
+        progressiveOriginalIndex = 0;
+        progressiveInsertIndex = 0;
+        progressiveTrailingItemsAdded = false;
+        progressiveOriginalDurationMs = 0L;
+        progressiveOriginalUri = null;
+        progressivePlaybackKey = null;
+        progressivePlaybackActive = false;
+        progressiveFallbackStarted = false;
+        if (playerView != null) {
+            playerView.setShowMultiWindowTimeBar(false);
+        }
     }
 
     private void assessSelectedVideoTrack(Tracks tracks) {
@@ -967,11 +1354,25 @@ public class VideoPlayerActivity extends AppCompatActivity {
             return;
         }
 
+        long savedPositionMs = positionInfo.positionMs;
         long durationMs = C.TIME_UNSET;
+        if (progressivePlaybackActive
+                && progressivePlaybackKey != null
+                && progressivePlaybackKey.equals(key)) {
+            int segmentIndex = positionInfo.mediaItemIndex - progressiveOriginalIndex;
+            if (segmentIndex >= 0 && segmentIndex < progressiveSegments.size()) {
+                savedPositionMs = progressiveSegments.get(segmentIndex).window.startMs
+                        + Math.max(0L, positionInfo.positionMs);
+                durationMs = progressiveOriginalDurationMs;
+            }
+        }
         if (exoPlayer != null) {
             Timeline timeline = exoPlayer.getCurrentTimeline();
             int index = positionInfo.mediaItemIndex;
-            if (!timeline.isEmpty() && index >= 0 && index < timeline.getWindowCount()) {
+            if ((durationMs <= 0L || durationMs == C.TIME_UNSET)
+                    && !timeline.isEmpty()
+                    && index >= 0
+                    && index < timeline.getWindowCount()) {
                 Timeline.Window window = new Timeline.Window();
                 timeline.getWindow(index, window);
                 durationMs = window.getDurationMs();
@@ -980,8 +1381,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
         if (durationMs <= 0 || durationMs == C.TIME_UNSET) {
             durationMs = PlaybackPrefs.getInstance(this).getDuration(key);
         }
-        if (durationMs > 0 && positionInfo.positionMs >= 0) {
-            PlaybackPrefs.getInstance(this).save(key, positionInfo.positionMs, durationMs);
+        if (durationMs > 0 && savedPositionMs >= 0) {
+            PlaybackPrefs.getInstance(this).save(key, savedPositionMs, durationMs);
         }
     }
 
@@ -1023,8 +1424,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
             if (playbackKey != null) {
                 PlaybackPrefs.getInstance(this).save(
                         playbackKey,
-                        exoPlayer.getCurrentPosition(),
-                        exoPlayer.getDuration()
+                        currentLogicalPlaybackPosition(),
+                        currentLogicalDuration()
                 );
             }
             exoPlayer.setPlayWhenReady(false);
@@ -1037,6 +1438,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             compatibilityTranscodeSession.cancel();
             compatibilityTranscodeSession = null;
         }
+        clearProgressivePlaybackState();
         releasePlayerOnly();
         uiHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
@@ -1134,10 +1536,22 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private String resolveCurrentTitle() {
         if (exoPlayer != null) {
             int currentIndex = exoPlayer.getCurrentMediaItemIndex();
+            MediaItem currentItem = exoPlayer.getCurrentMediaItem();
+            if (progressivePlaybackActive
+                    && currentItem != null
+                    && progressivePlaybackKey != null
+                    && progressivePlaybackKey.equals(currentItem.mediaId)) {
+                if (playlistTitles != null
+                        && progressiveOriginalIndex >= 0
+                        && progressiveOriginalIndex < playlistTitles.size()) {
+                    return stripExtension(playlistTitles.get(progressiveOriginalIndex));
+                }
+                return resolveDisplayTitle(progressiveOriginalUri);
+            }
             if (playlistTitles != null && currentIndex >= 0 && currentIndex < playlistTitles.size()) {
                 return stripExtension(playlistTitles.get(currentIndex));
             }
-            MediaItem mediaItem = exoPlayer.getCurrentMediaItem();
+            MediaItem mediaItem = currentItem;
             if (mediaItem != null && mediaItem.localConfiguration != null) {
                 if (compatibilityPlaybackKey != null
                         && compatibilityPlaybackKey.equals(mediaItem.mediaId)
@@ -1258,6 +1672,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         Format fmt = trackGroup.getFormat(trackIndex);
 
         if (selectedGroup.isTrackSupported(trackIndex) || isAudioFormatSupported(fmt)) {
+            selectedAudioActionId = item.id;
             TrackSelectionOverride override = new TrackSelectionOverride(trackGroup, trackIndex);
             DefaultTrackSelector.Parameters params =
                     trackSelector.buildUponParameters()
@@ -1274,6 +1689,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void applySubtitleSelection(DefaultTrackSelector trackSelector, List<Tracks.Group> subtitleGroups, GlassUi.ActionItem item) {
         if (item.id == ACTION_SUBTITLE_OFF) {
+            selectedSubtitleActionId = ACTION_SUBTITLE_OFF;
             DefaultTrackSelector.Parameters params =
                     trackSelector.buildUponParameters()
                             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -1293,6 +1709,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
 
         TrackGroup trackGroup = selectedGroup.getMediaTrackGroup();
+        selectedSubtitleActionId = item.id;
         TrackSelectionOverride override = new TrackSelectionOverride(trackGroup, trackIndex);
         DefaultTrackSelector.Parameters params =
                 trackSelector.buildUponParameters()
@@ -1302,6 +1719,71 @@ public class VideoPlayerActivity extends AppCompatActivity {
                         .build();
         trackSelector.setParameters(params);
         GlassUi.showToast(this, "Selected captions: " + item.title);
+    }
+
+    private void restoreSelectedTracks(Tracks tracks) {
+        if (restoringTrackSelection || trackSelector == null || tracks == null) {
+            return;
+        }
+        List<Tracks.Group> audioGroups = new ArrayList<>();
+        List<Tracks.Group> subtitleGroups = new ArrayList<>();
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() == C.TRACK_TYPE_AUDIO && group.length > 0) {
+                audioGroups.add(group);
+            } else if (group.getType() == C.TRACK_TYPE_TEXT && group.length > 0) {
+                subtitleGroups.add(group);
+            }
+        }
+
+        DefaultTrackSelector.Parameters.Builder builder = trackSelector.buildUponParameters();
+        boolean changed = false;
+        if (selectedAudioActionId != Integer.MIN_VALUE) {
+            int groupIndex = selectedAudioActionId / 100;
+            int trackIndex = selectedAudioActionId % 100;
+            if (groupIndex >= 0
+                    && groupIndex < audioGroups.size()
+                    && trackIndex >= 0
+                    && trackIndex < audioGroups.get(groupIndex).length
+                    && !audioGroups.get(groupIndex).isTrackSelected(trackIndex)) {
+                TrackGroup trackGroup = audioGroups.get(groupIndex).getMediaTrackGroup();
+                builder.setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                        .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                        .addOverride(new TrackSelectionOverride(trackGroup, trackIndex));
+                changed = true;
+            }
+        }
+
+        if (selectedSubtitleActionId == ACTION_SUBTITLE_OFF) {
+            if (isTextTrackEnabled()) {
+                builder.clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true);
+                changed = true;
+            }
+        } else {
+            int groupIndex = selectedSubtitleActionId / 100;
+            int trackIndex = selectedSubtitleActionId % 100;
+            if (groupIndex >= 0
+                    && groupIndex < subtitleGroups.size()
+                    && trackIndex >= 0
+                    && trackIndex < subtitleGroups.get(groupIndex).length
+                    && subtitleGroups.get(groupIndex).isTrackSupported(trackIndex)
+                    && !subtitleGroups.get(groupIndex).isTrackSelected(trackIndex)) {
+                TrackGroup trackGroup = subtitleGroups.get(groupIndex).getMediaTrackGroup();
+                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .addOverride(new TrackSelectionOverride(trackGroup, trackIndex));
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            restoringTrackSelection = true;
+            try {
+                trackSelector.setParameters(builder.build());
+            } finally {
+                restoringTrackSelection = false;
+            }
+        }
     }
 
     private boolean isTextTrackEnabled() {
