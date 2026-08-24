@@ -474,7 +474,7 @@ final class CompatibilityVideoTranscoder {
         return -1L;
     }
 
-    private static long readDurationMs(Context context, Uri uri) {
+    static long readDurationMs(Context context, Uri uri) {
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         try {
             retriever.setDataSource(context, uri);
@@ -511,13 +511,13 @@ final class CompatibilityVideoTranscoder {
         return withOverhead >= Long.MAX_VALUE ? Long.MAX_VALUE : (long) Math.ceil(withOverhead);
     }
 
-    private static boolean isDecoderFailure(ExportException error) {
+    static boolean isDecoderFailure(ExportException error) {
         return error.errorCode == ExportException.ERROR_CODE_DECODER_INIT_FAILED
                 || error.errorCode == ExportException.ERROR_CODE_DECODING_FAILED
                 || error.errorCode == ExportException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED;
     }
 
-    private static boolean isUsableVideo(File file, long expectedDurationMs) {
+    static boolean isUsableVideo(File file, long expectedDurationMs) {
         if (file == null || !file.isFile() || file.length() < 4096L) {
             return false;
         }

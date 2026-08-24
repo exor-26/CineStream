@@ -1,8 +1,11 @@
 package com.example.cinestream;
 
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.FileOutputStream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -10,6 +13,9 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 public class ProgressiveCompatibilityPolicyTest {
+    @Rule
+    public final TemporaryFolder temporaryFolder = new TemporaryFolder();
+
     @Test
     public void firstAndLaterSegmentWindowsAreDeterministic() {
         ProgressiveCompatibilityPolicy.SegmentWindow first =
@@ -134,5 +140,45 @@ public class ProgressiveCompatibilityPolicyTest {
         assertTrue(ProgressiveCompatibilityCache.isCompletedSegment(completed));
         assertFalse(ProgressiveCompatibilityCache.isCompletedSegment(incomplete));
         assertTrue(ProgressiveCompatibilityCache.isIncompleteSegment(incomplete));
+    }
+
+    @Test
+    public void completedPromotionIsAtomicAndNeverOverwritesCache() throws Exception {
+        File cache = temporaryFolder.newFolder("progressive");
+        File completed = ProgressiveCompatibilityCache.completedSegment(
+                cache,
+                "source",
+                ProgressiveCompatibilityPolicy.segmentWindow(0, 60_000L),
+                new CompatibilityVideoPolicy.Target(854, 480, 24f)
+        );
+        File incomplete = ProgressiveCompatibilityCache.incompleteSegment(completed);
+        try (FileOutputStream output = new FileOutputStream(incomplete)) {
+            output.write(new byte[]{1, 2, 3, 4});
+        }
+
+        assertTrue(ProgressiveCompatibilityCache.promote(incomplete, completed));
+        assertTrue(completed.isFile());
+        assertFalse(incomplete.exists());
+
+        try (FileOutputStream output = new FileOutputStream(incomplete)) {
+            output.write(new byte[]{5, 6, 7, 8});
+        }
+        assertFalse(ProgressiveCompatibilityCache.promote(incomplete, completed));
+        assertEquals(4L, completed.length());
+        assertTrue(incomplete.isFile());
+    }
+
+    @Test
+    public void cleanupDeletesOnlyIncompleteSegmentFiles() throws Exception {
+        File cache = temporaryFolder.newFolder("cleanup");
+        File completed = new File(cache, "progressive_source_s000000_0-3000_854x480_24.mp4");
+        File incomplete = ProgressiveCompatibilityCache.incompleteSegment(completed);
+        assertTrue(completed.createNewFile());
+        assertTrue(incomplete.createNewFile());
+
+        ProgressiveCompatibilityCache.deleteIncomplete(completed);
+        assertTrue(completed.exists());
+        ProgressiveCompatibilityCache.deleteIncomplete(incomplete);
+        assertFalse(incomplete.exists());
     }
 }

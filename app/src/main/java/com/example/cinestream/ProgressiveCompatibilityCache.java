@@ -62,4 +62,21 @@ final class ProgressiveCompatibilityCache {
                 && file.getName().endsWith(".mp4")
                 && !isIncompleteSegment(file);
     }
+
+    static boolean promote(File incomplete, File completed) {
+        if (!isIncompleteSegment(incomplete)
+                || !isCompletedSegment(completed)
+                || !incomplete.isFile()
+                || completed.exists()) {
+            return false;
+        }
+        return incomplete.renameTo(completed);
+    }
+
+    static void deleteIncomplete(File file) {
+        if (isIncompleteSegment(file) && file.isFile()) {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+    }
 }
