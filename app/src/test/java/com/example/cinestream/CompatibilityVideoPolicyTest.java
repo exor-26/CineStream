@@ -11,6 +11,17 @@ import static org.junit.Assert.assertTrue;
 public class CompatibilityVideoPolicyTest {
 
     @Test
+    public void final480FrameRateVariantIsDistinct() {
+        CompatibilityVideoPolicy.Target p480_30 =
+                new CompatibilityVideoPolicy.Target(854, 480, 30f);
+        CompatibilityVideoPolicy.Target p480_24 =
+                new CompatibilityVideoPolicy.Target(854, 480, 24f);
+
+        assertTrue(CompatibilityVideoPolicy.isAnyLowerFrameRateVariant(p480_30, p480_24));
+        assertFalse(CompatibilityVideoPolicy.isAnyLowerFrameRateVariant(p480_24, p480_30));
+    }
+
+    @Test
     public void compatibilityCacheRejectsPartialExports() {
         assertTrue(CompatibilityVideoTranscoder.isDurationComplete(30_000L, 29_000L));
         assertFalse(CompatibilityVideoTranscoder.isDurationComplete(30_000L, 2_000L));

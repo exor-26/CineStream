@@ -15,6 +15,15 @@ public final class AppExecutors {
         return thread;
     });
 
+    // Playback recovery must not wait behind library scans, thumbnail extraction or an earlier
+    // segment validation. A dedicated serial executor keeps cache discovery deterministic without
+    // adding competing video decoder work.
+    private static final ExecutorService PLAYBACK_RECOVERY = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "cinestream-playback-recovery");
+        thread.setPriority(Thread.NORM_PRIORITY - 1);
+        return thread;
+    });
+
     private static final ExecutorService METADATA = Executors.newFixedThreadPool(2, r -> {
         Thread thread = new Thread(r, "cinestream-metadata");
         thread.setPriority(Thread.NORM_PRIORITY - 1);
@@ -34,6 +43,10 @@ public final class AppExecutors {
 
     public static ExecutorService mediaIo() {
         return MEDIA_IO;
+    }
+
+    public static ExecutorService playbackRecovery() {
+        return PLAYBACK_RECOVERY;
     }
 
     public static ExecutorService metadata() {

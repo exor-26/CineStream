@@ -829,7 +829,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
 
         compatibilityCacheLookupPending = true;
-        AppExecutors.mediaIo().execute(() -> {
+        AppExecutors.playbackRecovery().execute(() -> {
             File cachedVideo = CompatibilityVideoTranscoder.findCachedVideoForPlayback(
                     VideoPlayerActivity.this,
                     sourceUri
@@ -1033,7 +1033,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         decoderMode = decoderMode.withoutSoftwareVideo();
         stopSoftwareObservation();
         clearProgressivePlaybackState();
-        releasePlayerOnly();
+        keepOriginalAudioDuringCompatibilityPreparation();
         compatibilityTranscodeSession = CompatibilityVideoTranscoder.start(
                 this,
                 sourceUri,
@@ -1063,6 +1063,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                         Log.i("VideoCompatibility",
                                 (fromCache ? "Using cached " : "Created ")
                                         + "H.264 compatibility video " + target);
+                        releasePlayerOnly();
                         createPlayerWithCompatibilityVideo(
                                 recoveryItems,
                                 recoveryIndex,
@@ -1090,6 +1091,17 @@ public class VideoPlayerActivity extends AppCompatActivity {
                         }
                     }
                 }
+        );
+    }
+
+    private void keepOriginalAudioDuringCompatibilityPreparation() {
+        if (trackSelector == null) {
+            return;
+        }
+        trackSelector.setParameters(
+                trackSelector.buildUponParameters()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+                        .build()
         );
     }
 

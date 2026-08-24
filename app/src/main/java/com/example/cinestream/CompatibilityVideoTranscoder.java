@@ -443,11 +443,19 @@ final class CompatibilityVideoTranscoder {
      * This does not start a conversion and must be called off the main thread.
      */
     static File findCachedVideoForThumbnail(Context context, Uri sourceUri) {
-        return findCachedVideoForPlayback(context, sourceUri);
+        return findCachedVideo(context, sourceUri, true);
     }
 
     /** Returns a completed, reusable compatibility file without starting new work. */
     static File findCachedVideoForPlayback(Context context, Uri sourceUri) {
+        return findCachedVideo(context, sourceUri, false);
+    }
+
+    private static File findCachedVideo(
+            Context context,
+            Uri sourceUri,
+            boolean probeVisibleFrame
+    ) {
         File cacheDir = chooseCacheDir(context);
         String prefix = "compat_" + sourceKey(context, sourceUri) + "_";
         File[] files = cacheDir.listFiles((dir, name) ->
@@ -460,7 +468,10 @@ final class CompatibilityVideoTranscoder {
         long expectedDurationMs = readDurationMs(context, sourceUri);
         File newestUsable = null;
         for (File file : files) {
-            if (isUsableVideo(file, expectedDurationMs)
+            boolean usable = probeVisibleFrame
+                    ? isUsableVideo(file, expectedDurationMs)
+                    : isStructurallyUsableVideo(file, expectedDurationMs);
+            if (usable
                     && (newestUsable == null
                     || file.lastModified() > newestUsable.lastModified())) {
                 newestUsable = file;
@@ -564,37 +575,61 @@ final class CompatibilityVideoTranscoder {
     }
 
     static boolean isUsableVideo(File file, long expectedDurationMs) {
-        if (file == null || !file.isFile() || file.length() < 4096L) {
+        if (!isStructurallyUsableVideo(file, expectedDurationMs)) {
             return false;
         }
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         try {
             retriever.setDataSource(file.getAbsolutePath());
-            String width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
-            String height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
-            String duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-            long actualDurationMs = parsePositiveLong(duration);
-            boolean structurallyValid = parsePositive(width)
-                    && parsePositive(height)
-                    && isDurationComplete(expectedDurationMs, actualDurationMs)
-                    && containsH264Video(file);
-            if (!structurallyValid) {
-                return false;
-            }
-            // Some low-end platform retrievers cannot extract a frame from an H.264 file that
-            // their normal MediaCodec playback path can decode. A null thumbnail is therefore
-            // inconclusive, not proof that the already-finalized video is black.
+            long actualDurationMs = parsePositiveLong(retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_DURATION
+            ));
+            // A completed file has already passed structural validation. Platform frame probes
+            // are advisory because some valid H.264 files return null here.
             if (!containsVisibleFrame(retriever, actualDurationMs)) {
                 Log.w(TAG, "Platform frame probe unavailable; accepting structurally valid H.264");
             }
             return true;
         } catch (Exception e) {
-            return false;
+            Log.w(TAG, "Platform frame probe failed; accepting structurally valid H.264", e);
+            return true;
         } finally {
             try {
                 retriever.release();
             } catch (Exception ignored) {
             }
+        }
+    }
+
+    static boolean isStructurallyUsableVideo(File file, long expectedDurationMs) {
+        if (file == null || !file.isFile() || file.length() < 4096L) {
+            return false;
+        }
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(file.getAbsolutePath());
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.getString(MediaFormat.KEY_MIME);
+                if (!MimeTypes.VIDEO_H264.equals(mime)) {
+                    continue;
+                }
+                int width = format.containsKey(MediaFormat.KEY_WIDTH)
+                        ? format.getInteger(MediaFormat.KEY_WIDTH) : 0;
+                int height = format.containsKey(MediaFormat.KEY_HEIGHT)
+                        ? format.getInteger(MediaFormat.KEY_HEIGHT) : 0;
+                long durationUs = format.containsKey(MediaFormat.KEY_DURATION)
+                        ? format.getLong(MediaFormat.KEY_DURATION) : 0L;
+                long actualDurationMs = durationUs > 0L ? durationUs / 1_000L : 0L;
+                return width > 0
+                        && height > 0
+                        && isDurationComplete(expectedDurationMs, actualDurationMs);
+            }
+            return false;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            extractor.release();
         }
     }
 
@@ -662,29 +697,6 @@ final class CompatibilityVideoTranscoder {
             }
         }
         return false;
-    }
-
-    private static boolean containsH264Video(File file) {
-        MediaExtractor extractor = new MediaExtractor();
-        try {
-            extractor.setDataSource(file.getAbsolutePath());
-            for (int i = 0; i < extractor.getTrackCount(); i++) {
-                MediaFormat format = extractor.getTrackFormat(i);
-                String mime = format.getString(MediaFormat.KEY_MIME);
-                if (MimeTypes.VIDEO_H264.equals(mime)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (Exception ignored) {
-            return false;
-        } finally {
-            extractor.release();
-        }
-    }
-
-    private static boolean parsePositive(String value) {
-        return parsePositiveLong(value) > 0L;
     }
 
     private static long parsePositiveLong(String value) {

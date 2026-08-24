@@ -4,7 +4,6 @@ package com.example.cinestream;
 final class ProgressiveCompatibilityPolicy {
     static final long FIRST_SEGMENT_MS = 3_000L;
     static final long LATER_SEGMENT_MS = 5_000L;
-    static final long INTERNAL_FRAGMENT_MS = 1_000L;
     static final long INITIAL_BUFFER_MS = 8_000L;
     static final int INITIAL_BUFFER_SEGMENTS = 2;
 

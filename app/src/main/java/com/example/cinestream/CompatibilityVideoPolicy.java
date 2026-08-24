@@ -77,6 +77,14 @@ final class CompatibilityVideoPolicy {
                 && next.frameRate <= 31f;
     }
 
+    static boolean isAnyLowerFrameRateVariant(Target current, Target next) {
+        return current != null
+                && next != null
+                && current.width == next.width
+                && current.height == next.height
+                && current.frameRate > next.frameRate + 0.5f;
+    }
+
     static boolean isWithinCeiling(Target candidate, Target ceiling) {
         return candidate != null
                 && (ceiling == null

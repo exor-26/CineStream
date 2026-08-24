@@ -21,7 +21,6 @@ import androidx.media3.transformer.EditedMediaItemSequence;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Effects;
-import androidx.media3.transformer.InAppFragmentedMp4Muxer;
 import androidx.media3.transformer.Transformer;
 
 import com.example.cinestream.ffmpeg.CineFfmpegLibrary;
@@ -176,7 +175,7 @@ final class ProgressiveCompatibilityManager {
         }
 
         void start() {
-            AppExecutors.mediaIo().execute(() -> {
+            AppExecutors.playbackRecovery().execute(() -> {
                 List<Segment> cached = discoverCachedPrefix();
                 MAIN.post(() -> {
                     if (cancelled) {
@@ -184,6 +183,15 @@ final class ProgressiveCompatibilityManager {
                     }
                     segments.addAll(cached);
                     nextSegmentIndex = segments.size();
+                    if (!segments.isEmpty()) {
+                        targetIndex = 0;
+                        for (Segment cachedSegment : segments) {
+                            targetIndex = Math.max(
+                                    targetIndex,
+                                    targetIndexForTarget(cachedSegment.target)
+                            );
+                        }
+                    }
                     maybeDeliverInitial(false);
                     if (reachedSourceEnd()) {
                         complete();
@@ -217,7 +225,7 @@ final class ProgressiveCompatibilityManager {
                             window,
                             target
                     );
-                    if (CompatibilityVideoTranscoder.isUsableVideo(
+                    if (CompatibilityVideoTranscoder.isStructurallyUsableVideo(
                             file,
                             window.durationMs()
                     )) {
@@ -256,7 +264,10 @@ final class ProgressiveCompatibilityManager {
                     window,
                     target
             );
-            if (CompatibilityVideoTranscoder.isUsableVideo(completed, window.durationMs())) {
+            if (CompatibilityVideoTranscoder.isStructurallyUsableVideo(
+                    completed,
+                    window.durationMs()
+            )) {
                 acceptSegment(new Segment(completed, window, target), 0L, true);
                 return;
             }
@@ -339,9 +350,6 @@ final class ProgressiveCompatibilityManager {
             Transformer newTransformer = new Transformer.Builder(context)
                     .setAssetLoaderFactory(assetLoaderFactory)
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
-                    .setMuxerFactory(new InAppFragmentedMp4Muxer.Factory(
-                            ProgressiveCompatibilityPolicy.INTERNAL_FRAGMENT_MS
-                    ).setVideoDurationUs(window.durationMs() * 1_000L))
                     .addListener(new Transformer.Listener() {
                         @Override
                         public void onCompleted(
@@ -469,10 +477,23 @@ final class ProgressiveCompatibilityManager {
                         );
                 consecutiveFastSegments = adaptation.consecutiveFastSegments;
                 if (!adaptation.sustainable) {
-                    fail("Progressive preparation cannot stay ahead safely.", null);
-                    return;
+                    int lowerFrameRateIndex = targetIndex + 1;
+                    if (lowerFrameRateIndex < targets.size()
+                            && CompatibilityVideoPolicy.isAnyLowerFrameRateVariant(
+                            segment.target,
+                            targets.get(lowerFrameRateIndex)
+                    )) {
+                        // A 480p30 measurement is not a 480p24 measurement. Keep the validated
+                        // segment, expose the initial buffer, and test the final allowed rate.
+                        targetIndex = lowerFrameRateIndex;
+                        consecutiveFastSegments = 0;
+                    } else {
+                        fail("Progressive preparation cannot stay ahead safely.", null);
+                        return;
+                    }
+                } else {
+                    targetIndex = targetIndexForTier(adaptation.tier);
                 }
-                targetIndex = targetIndexForTier(adaptation.tier);
             }
 
             if (initialDelivered) {
@@ -534,6 +555,18 @@ final class ProgressiveCompatibilityManager {
                 }
             }
             return targets.size() - 1;
+        }
+
+        private int targetIndexForTarget(CompatibilityVideoPolicy.Target target) {
+            for (int index = 0; index < targets.size(); index++) {
+                CompatibilityVideoPolicy.Target candidate = targets.get(index);
+                if (candidate.width == target.width
+                        && candidate.height == target.height
+                        && Math.abs(candidate.frameRate - target.frameRate) < 0.5f) {
+                    return index;
+                }
+            }
+            return targetIndexForTier(tierForTarget(target));
         }
 
         private boolean reachedSourceEnd() {
