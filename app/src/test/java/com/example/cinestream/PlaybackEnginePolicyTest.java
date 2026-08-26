@@ -1,6 +1,7 @@
 package com.example.cinestream;
 
 import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
 
 import org.junit.Test;
 
@@ -97,6 +98,35 @@ public class PlaybackEnginePolicyTest {
         assertTrue(PlaybackEnginePolicy.isGovernorHandoff(wrapped));
         assertFalse(PlaybackEnginePolicy.isGovernorHandoff(
                 new IllegalStateException("ordinary failure")
+        ));
+    }
+
+    @Test
+    public void selectedReadyVideoWithoutFirstFrameTriggersRuntimeRecovery() {
+        assertFalse(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true, false, true, false, Player.STATE_READY, 5_999L, 1_000L
+        ));
+        assertTrue(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true, false, true, false, Player.STATE_READY, 6_000L, 1_000L
+        ));
+        assertFalse(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true, true, true, false, Player.STATE_READY, 20_000L, 10_000L
+        ));
+    }
+
+    @Test
+    public void bufferingVideoGetsLongerGraceAndPausedPlaybackNeverTrips() {
+        assertFalse(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true, false, true, false, Player.STATE_BUFFERING, 11_999L, 0L
+        ));
+        assertTrue(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true, false, true, false, Player.STATE_BUFFERING, 12_000L, 0L
+        ));
+        assertFalse(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true, false, false, false, Player.STATE_READY, 20_000L, 10_000L
+        ));
+        assertFalse(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true, false, true, true, Player.STATE_READY, 20_000L, 10_000L
         ));
     }
 }

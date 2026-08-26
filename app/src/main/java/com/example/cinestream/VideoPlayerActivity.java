@@ -130,6 +130,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private int softwareDroppedFrames;
     private boolean softwareStartupObserved;
     private boolean governorHandoffStarted;
+    private long firstFrameWatchStartMs;
+    private long firstFrameWatchStartPositionMs;
+    private boolean firstVideoFrameRendered;
+    private String firstFrameWatchPlaybackKey;
 
     private GestureDetector gestureDetector;
     private AudioManager audioManager;
@@ -169,6 +173,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     };
 
     private final Runnable softwareGovernorRunnable = this::evaluateDirectSoftwarePlayback;
+    private final Runnable firstFrameWatchdogRunnable = this::evaluateFirstVideoFrame;
 
     private final Player.Listener playbackListener = new Player.Listener() {
         @Override
@@ -189,6 +194,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             boolean sameLogicalItem = previousPlaybackKey != null
                     && previousPlaybackKey.equals(playbackKey);
             if (!sameLogicalItem) {
+                resetFirstFrameWatchdog();
                 compatibilityTranscodeAttempted = false;
                 softwareVideoRecoveryAttempted = false;
                 hardwareVideoFailureObserved = false;
@@ -255,6 +261,30 @@ public class VideoPlayerActivity extends AppCompatActivity {
         public void onTracksChanged(Tracks tracks) {
             assessSelectedVideoTrack(tracks);
             restoreSelectedTracks(tracks);
+        }
+
+        @Override
+        public void onPlaybackStateChanged(int playbackState) {
+            if (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING) {
+                startFirstFrameWatchdogIfNeeded();
+            } else {
+                stopFirstFrameWatchdogTimer();
+            }
+        }
+
+        @Override
+        public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+            if (playWhenReady) {
+                startFirstFrameWatchdogIfNeeded();
+            } else {
+                stopFirstFrameWatchdogTimer();
+            }
+        }
+
+        @Override
+        public void onRenderedFirstFrame() {
+            firstVideoFrameRendered = true;
+            stopFirstFrameWatchdogTimer();
         }
 
         @Override
@@ -394,6 +424,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void initializePlayerShell() {
+        resetFirstFrameWatchdog();
         releasePlayerOnly();
 
         trackSelector = new DefaultTrackSelector(this);
@@ -581,6 +612,111 @@ public class VideoPlayerActivity extends AppCompatActivity {
         softwareStartupObserved = false;
     }
 
+    private boolean isWatchingHardwareVideo() {
+        return exoPlayer != null
+                && softwareRecoveryVideoFormat != null
+                && !decoderMode.preferSoftwareVideo
+                && !progressivePlaybackActive
+                && (compatibilityPlaybackKey == null
+                || !compatibilityPlaybackKey.equals(playbackKey));
+    }
+
+    private void startFirstFrameWatchdogIfNeeded() {
+        if (!isWatchingHardwareVideo()
+                || firstVideoFrameRendered
+                || !exoPlayer.getPlayWhenReady()) {
+            return;
+        }
+        String currentKey = playbackKey;
+        if (firstFrameWatchStartMs == 0L
+                || currentKey == null
+                || !currentKey.equals(firstFrameWatchPlaybackKey)) {
+            firstFrameWatchStartMs = SystemClock.elapsedRealtime();
+            firstFrameWatchStartPositionMs = Math.max(0L, exoPlayer.getCurrentPosition());
+            firstFrameWatchPlaybackKey = currentKey;
+        }
+        uiHandler.removeCallbacks(firstFrameWatchdogRunnable);
+        uiHandler.postDelayed(firstFrameWatchdogRunnable, 1_000L);
+    }
+
+    private void stopFirstFrameWatchdogTimer() {
+        uiHandler.removeCallbacks(firstFrameWatchdogRunnable);
+        firstFrameWatchStartMs = 0L;
+        firstFrameWatchStartPositionMs = 0L;
+        firstFrameWatchPlaybackKey = null;
+    }
+
+    private void resetFirstFrameWatchdog() {
+        stopFirstFrameWatchdogTimer();
+        firstVideoFrameRendered = false;
+    }
+
+    private void evaluateFirstVideoFrame() {
+        if (!isWatchingHardwareVideo() || firstVideoFrameRendered) {
+            return;
+        }
+        long nowMs = SystemClock.elapsedRealtime();
+        long elapsedMs = Math.max(0L, nowMs - firstFrameWatchStartMs);
+        long mediaProgressMs = Math.max(
+                0L,
+                exoPlayer.getCurrentPosition() - firstFrameWatchStartPositionMs
+        );
+        boolean suppressed = exoPlayer.getPlaybackSuppressionReason()
+                != Player.PLAYBACK_SUPPRESSION_REASON_NONE;
+        if (suppressed || !exoPlayer.getPlayWhenReady()) {
+            firstFrameWatchStartMs = nowMs;
+            firstFrameWatchStartPositionMs = Math.max(0L, exoPlayer.getCurrentPosition());
+            uiHandler.postDelayed(firstFrameWatchdogRunnable, 1_000L);
+            return;
+        }
+        if (!PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
+                true,
+                false,
+                exoPlayer.getPlayWhenReady(),
+                suppressed,
+                exoPlayer.getPlaybackState(),
+                elapsedMs,
+                mediaProgressMs
+        )) {
+            uiHandler.postDelayed(firstFrameWatchdogRunnable, 1_000L);
+            return;
+        }
+
+        Format failedVideo = softwareRecoveryVideoFormat;
+        hardwareVideoFailureObserved = true;
+        stopFirstFrameWatchdogTimer();
+        Log.w("VideoCapability",
+                "Selected platform decoder produced no first video frame; "
+                        + "using runtime recovery for " + failedVideo);
+
+        if (!softwareVideoRecoveryAttempted
+                && !CineFfmpegLibrary.isDolbyVisionFormat(
+                failedVideo.sampleMimeType,
+                failedVideo.codecs
+        )
+                && PlaybackEnginePolicy.hasBundledSoftwareVideoDecoder(
+                failedVideo.sampleMimeType
+        )) {
+            softwareVideoRecoveryAttempted = true;
+            decoderMode = decoderMode.withSoftwareVideo();
+            ArrayList<MediaItem> items = snapshotMediaItems();
+            int itemIndex = exoPlayer.getCurrentMediaItemIndex();
+            long position = Math.max(0L, exoPlayer.getCurrentPosition());
+            boolean playWhenReady = exoPlayer.getPlayWhenReady();
+            Log.w("VideoCapability", "Retrying silent platform failure with CineFFmpeg");
+            rebuildPlayerPreservingCompatibility(items, itemIndex, position, playWhenReady);
+            return;
+        }
+
+        if (!compatibilityTranscodeAttempted
+                && CineFfmpegLibrary.supportsTransformerMimeType(
+                failedVideo.sampleMimeType
+        )) {
+            compatibilityTranscodeAttempted = true;
+            startCompatibilityRecovery(failedVideo);
+        }
+    }
+
     private void resetSoftwareObservationWindow(long nowMs, long mediaPositionMs) {
         softwareObservationStartMs = nowMs;
         softwareObservationStartPositionMs = Math.max(0L, mediaPositionMs);
@@ -635,7 +771,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
                         mediaProgressMs,
                         softwareRenderedFrames,
                         softwareDroppedFrames,
-                        softwareStartupObserved
+                        softwareStartupObserved,
+                        firstVideoFrameRendered
                 )
         );
         compatibilityCeiling = decision.compatibilityCeiling(
@@ -815,6 +952,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
         final Uri sourceUri = videoUri;
         final String sourceKey = playbackKey;
+        final boolean forceSourceFfmpegDecoder = hardwareVideoFailureObserved
+                || CineFfmpegLibrary.isDolbyVisionFormat(
+                failedVideo.sampleMimeType,
+                failedVideo.codecs
+        );
         final ArrayList<MediaItem> recoveryItems = snapshotMediaItems();
         final int recoveryIndex = progressivePlaybackActive
                 ? progressiveOriginalIndex
@@ -832,7 +974,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
         AppExecutors.playbackRecovery().execute(() -> {
             File cachedVideo = CompatibilityVideoTranscoder.findCachedVideoForPlayback(
                     VideoPlayerActivity.this,
-                    sourceUri
+                    sourceUri,
+                    forceSourceFfmpegDecoder
             );
             uiHandler.post(() -> {
                 compatibilityCacheLookupPending = false;
@@ -864,7 +1007,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
                         recoveryPosition,
                         recoveryPlayWhenReady,
                         sourceUri,
-                        sourceKey
+                        sourceKey,
+                        forceSourceFfmpegDecoder
                 );
             });
         });
@@ -907,7 +1051,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
             long recoveryPosition,
             boolean recoveryPlayWhenReady,
             Uri sourceUri,
-            String sourceKey
+            String sourceKey,
+            boolean forceSourceFfmpegDecoder
     ) {
         decoderMode = decoderMode.withoutSoftwareVideo();
         stopSoftwareObservation();
@@ -921,6 +1066,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 failedVideo.sampleMimeType,
                 failedVideo.codecs,
                 compatibilityCeiling,
+                forceSourceFfmpegDecoder,
                 new ProgressiveCompatibilityManager.Listener() {
                     @Override
                     public void onInitialSegments(
@@ -1043,6 +1189,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 failedVideo.sampleMimeType,
                 failedVideo.codecs,
                 compatibilityCeiling,
+                hardwareVideoFailureObserved,
                 new CompatibilityVideoTranscoder.Callback() {
                     @Override
                     public void onReady(
@@ -1365,9 +1512,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     continue;
                 }
                 Format format = mediaTrackGroup.getFormat(i);
-                if (decoderMode.preferSoftwareVideo) {
-                    softwareRecoveryVideoFormat = format;
-                }
+                // Keep the selected format for both explicit decoder errors and silent platform
+                // failures. Some MediaCodec implementations accept a track but never emit a
+                // frame, so no exception exists from which to recover the format later.
+                softwareRecoveryVideoFormat = format;
                 currentVideoAssessment = DeviceVideoCapabilities.assess(format);
                 Log.i("VideoCapability",
                         "mime=" + format.sampleMimeType
@@ -1385,6 +1533,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                             "Selected video exceeds the device-reported decode envelope; "
                                     + "playback is still attempted because OEM tables can under-report.");
                 }
+                startFirstFrameWatchdogIfNeeded();
                 return;
             }
         }
@@ -1492,6 +1641,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void releasePlayerOnly() {
         stopSoftwareObservation();
+        resetFirstFrameWatchdog();
         releaseLoudnessEnhancer();
         if (exoPlayer != null) {
             exoPlayer.removeListener(playbackListener);
@@ -1518,6 +1668,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         if (exoPlayer != null) {
             exoPlayer.setPlayWhenReady(true);
             startSoftwareObservationIfNeeded();
+            startFirstFrameWatchdogIfNeeded();
         }
     }
 
@@ -1533,6 +1684,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 );
             }
             exoPlayer.setPlayWhenReady(false);
+            stopFirstFrameWatchdogTimer();
         }
     }
 

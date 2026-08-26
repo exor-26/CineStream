@@ -130,6 +130,7 @@ final class ProgressiveCompatibilityManager {
                 float sourceFrameRate,
                 @Nullable String sourceMimeType,
                 @Nullable String sourceCodecs,
+                boolean forceSourceFfmpegDecoder,
                 long sourceDurationMs,
                 File cacheDir,
                 List<CompatibilityVideoPolicy.Target> targets,
@@ -142,7 +143,8 @@ final class ProgressiveCompatibilityManager {
             this.sourceHeight = sourceHeight;
             this.sourceFrameRate = sourceFrameRate;
             this.sourceMimeType = sourceMimeType;
-            streamRequiresFfmpegDecoder = CineFfmpegLibrary.isDolbyVisionFormat(
+            streamRequiresFfmpegDecoder = forceSourceFfmpegDecoder
+                    || CineFfmpegLibrary.isDolbyVisionFormat(
                     sourceMimeType,
                     sourceCodecs
             );
@@ -640,9 +642,17 @@ final class ProgressiveCompatibilityManager {
             @Nullable String sourceMimeType,
             @Nullable String sourceCodecs,
             @Nullable CompatibilityVideoPolicy.Target ceiling,
+            boolean forceSourceFfmpegDecoder,
             Listener listener
     ) {
         String sourceKey = CompatibilityVideoTranscoder.sourceKey(context, sourceUri);
+        if (forceSourceFfmpegDecoder
+                || CineFfmpegLibrary.isDolbyVisionFormat(sourceMimeType, sourceCodecs)) {
+            // Keep forced-software source exports separate from caches that may have been produced
+            // by a platform decoder which accepted the source but emitted black frames.
+            sourceKey = CompatibilityVideoTranscoder.cacheKeyForSourceDecoder(sourceKey, true);
+            forceSourceFfmpegDecoder = true;
+        }
         Job existing = JOBS.get(sourceKey);
         if (existing != null) {
             existing.attach(listener);
@@ -689,6 +699,7 @@ final class ProgressiveCompatibilityManager {
                 sourceFrameRate,
                 sourceMimeType,
                 sourceCodecs,
+                forceSourceFfmpegDecoder,
                 CompatibilityVideoTranscoder.readDurationMs(context, sourceUri),
                 cacheDir,
                 targets,

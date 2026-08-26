@@ -87,6 +87,7 @@ public final class CineFfmpegTransformerDecoderFactory implements Codec.DecoderF
         if (forceFfmpegVideo
                 && CineFfmpegLibrary.supportsTransformerMimeType(format.sampleMimeType)) {
             try {
+                Log.i(TAG, "Using CineFFmpeg source decoder after runtime platform failure");
                 return new CineFfmpegTransformerCodec(
                         format,
                         outputSurface,

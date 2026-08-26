@@ -326,6 +326,7 @@ final class CompatibilityVideoTranscoder {
                 null,
                 null,
                 null,
+                false,
                 callback
         );
     }
@@ -348,6 +349,7 @@ final class CompatibilityVideoTranscoder {
                 null,
                 null,
                 ceiling,
+                false,
                 callback
         );
     }
@@ -361,6 +363,7 @@ final class CompatibilityVideoTranscoder {
             @Nullable String sourceMimeType,
             @Nullable String sourceCodecs,
             CompatibilityVideoPolicy.Target ceiling,
+            boolean forceSourceFfmpegDecoder,
             Callback callback
     ) {
         List<CompatibilityVideoPolicy.Target> targets =
@@ -391,6 +394,9 @@ final class CompatibilityVideoTranscoder {
         cleanupOldFiles(cacheDir);
 
         String sourceKey = sourceKey(context, sourceUri);
+        boolean useFfmpegSourceDecoder = forceSourceFfmpegDecoder
+                || CineFfmpegLibrary.isDolbyVisionFormat(sourceMimeType, sourceCodecs);
+        sourceKey = cacheKeyForSourceDecoder(sourceKey, useFfmpegSourceDecoder);
         long durationMs = readDurationMs(context, sourceUri);
         for (CompatibilityVideoPolicy.Target target : targets) {
             File cached = outputFile(cacheDir, sourceKey, target);
@@ -412,7 +418,7 @@ final class CompatibilityVideoTranscoder {
                 targets,
                 session,
                 durationMs,
-                CineFfmpegLibrary.isDolbyVisionFormat(sourceMimeType, sourceCodecs)
+                useFfmpegSourceDecoder
         ).startNext();
         return session.isFinished() ? null : session;
     }
@@ -443,18 +449,27 @@ final class CompatibilityVideoTranscoder {
      * This does not start a conversion and must be called off the main thread.
      */
     static File findCachedVideoForThumbnail(Context context, Uri sourceUri) {
-        return findCachedVideo(context, sourceUri, true);
+        return findCachedVideo(context, sourceUri, true, false);
     }
 
     /** Returns a completed, reusable compatibility file without starting new work. */
     static File findCachedVideoForPlayback(Context context, Uri sourceUri) {
-        return findCachedVideo(context, sourceUri, false);
+        return findCachedVideoForPlayback(context, sourceUri, false);
+    }
+
+    static File findCachedVideoForPlayback(
+            Context context,
+            Uri sourceUri,
+            boolean requireFfmpegSourceDecoder
+    ) {
+        return findCachedVideo(context, sourceUri, false, requireFfmpegSourceDecoder);
     }
 
     private static File findCachedVideo(
             Context context,
             Uri sourceUri,
-            boolean probeVisibleFrame
+            boolean probeVisibleFrame,
+            boolean requireFfmpegSourceDecoder
     ) {
         File cacheDir = chooseCacheDir(context);
         String prefix = "compat_" + sourceKey(context, sourceUri) + "_";
@@ -468,6 +483,12 @@ final class CompatibilityVideoTranscoder {
         long expectedDurationMs = readDurationMs(context, sourceUri);
         File newestUsable = null;
         for (File file : files) {
+            if (requireFfmpegSourceDecoder && !file.getName().contains("_ffsrc_")) {
+                // A silently failing platform decoder can produce a structurally valid black
+                // cache. Preserve it, but do not reuse it after runtime proved that source path
+                // unsafe; FFmpeg-decoded files have separate provenance.
+                continue;
+            }
             boolean usable = probeVisibleFrame
                     ? isUsableVideo(file, expectedDurationMs)
                     : isStructurallyUsableVideo(file, expectedDurationMs);
@@ -501,6 +522,11 @@ final class CompatibilityVideoTranscoder {
         long modified = readSourceModifiedTime(context, uri);
         String material = uri + "|" + length + "|" + modified;
         return ProgressiveCompatibilityCache.stableSourceIdentity(material);
+    }
+
+    static String cacheKeyForSourceDecoder(String sourceKey, boolean forceFfmpegSourceDecoder) {
+        String safeKey = sourceKey != null ? sourceKey : "";
+        return forceFfmpegSourceDecoder ? safeKey + "_ffsrc" : safeKey;
     }
 
     private static long readSourceLength(Context context, Uri uri) {

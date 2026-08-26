@@ -11,6 +11,18 @@ import static org.junit.Assert.assertTrue;
 public class CompatibilityVideoPolicyTest {
 
     @Test
+    public void failedPlatformSourceDecodeUsesSeparateCacheProvenance() {
+        assertEquals(
+                "source_ffsrc",
+                CompatibilityVideoTranscoder.cacheKeyForSourceDecoder("source", true)
+        );
+        assertEquals(
+                "source",
+                CompatibilityVideoTranscoder.cacheKeyForSourceDecoder("source", false)
+        );
+    }
+
+    @Test
     public void final480FrameRateVariantIsDistinct() {
         CompatibilityVideoPolicy.Target p480_30 =
                 new CompatibilityVideoPolicy.Target(854, 480, 30f);

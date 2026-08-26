@@ -26,6 +26,9 @@ import java.util.ArrayList;
  */
 public final class PlaybackEnginePolicy {
 
+    static final long VIDEO_FIRST_FRAME_GRACE_MS = 6_000L;
+    static final long VIDEO_BUFFERING_HARD_TIMEOUT_MS = 12_000L;
+
     public enum DecoderMode {
         HARDWARE_FIRST(false, false),
         SOFTWARE_AUDIO_FIRST(true, false),
@@ -133,6 +136,35 @@ public final class PlaybackEnginePolicy {
         return runtimeHardwareFailure
                 || reportedSupport == DeviceVideoCapabilities.Support.EXCEEDS_REPORTED_CAPABILITY
                 || reportedSupport == DeviceVideoCapabilities.Support.NO_PLATFORM_DECODER;
+    }
+
+    /**
+     * Detects a decoder that accepted a selected video track but never produced a frame.
+     *
+     * <p>Some platform codecs fail this way without raising a MediaCodec error. The decision is
+     * deliberately based on runtime playback state only, never on a device identity table.
+     */
+    static boolean shouldRecoverFromMissingFirstFrame(
+            boolean selectedVideo,
+            boolean firstFrameRendered,
+            boolean playRequested,
+            boolean playbackSuppressed,
+            int playbackState,
+            long elapsedMs,
+            long mediaProgressMs
+    ) {
+        if (!selectedVideo || firstFrameRendered || !playRequested || playbackSuppressed) {
+            return false;
+        }
+        if (elapsedMs < VIDEO_FIRST_FRAME_GRACE_MS) {
+            return false;
+        }
+        if (playbackState == androidx.media3.common.Player.STATE_READY
+                || mediaProgressMs >= 500L) {
+            return true;
+        }
+        return playbackState == androidx.media3.common.Player.STATE_BUFFERING
+                && elapsedMs >= VIDEO_BUFFERING_HARD_TIMEOUT_MS;
     }
 
     static boolean isGovernorHandoff(Throwable error) {

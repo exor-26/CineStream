@@ -71,6 +71,21 @@ public class VideoResourceGovernorTest {
     }
 
     @Test
+    public void audioProgressCannotHideMissingSoftwareVideoFrames() {
+        VideoResourceGovernor.Decision decision = VideoResourceGovernor.evaluate(
+                snapshot(2 * GIB, 6 * GIB, false, 8, 0.35d, 0,
+                        3840, 2160, 24f, 40_000_000L, 10, 1920, 1080, 60f, -1),
+                new VideoResourceGovernor.Observation(
+                        6_000L, 5_950L, 0, 0, false, false
+                )
+        );
+
+        assertTrue(decision.observationMature);
+        assertFalse(decision.directSoftwareSustainable);
+        assertEquals("software decoder produced no first video frame", decision.reason);
+    }
+
+    @Test
     public void codecMetadataCanRaiseBitDepthWithoutHdrFlag() {
         assertEquals(10, VideoResourceGovernor.estimateBitDepth("hvc1.2.4.L153.B0", false));
         assertEquals(10, VideoResourceGovernor.estimateBitDepth("av01.profile2.10", false));

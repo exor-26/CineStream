@@ -89,9 +89,11 @@ final class VideoResourceGovernor {
         final int renderedFrames;
         final int droppedFrames;
         final boolean startupComplete;
+        final boolean firstFrameRendered;
 
         Observation(long elapsedMs, long mediaProgressMs, int renderedFrames, int droppedFrames) {
-            this(elapsedMs, mediaProgressMs, renderedFrames, droppedFrames, false);
+            this(elapsedMs, mediaProgressMs, renderedFrames, droppedFrames, false,
+                    renderedFrames > 0);
         }
 
         Observation(
@@ -101,11 +103,24 @@ final class VideoResourceGovernor {
                 int droppedFrames,
                 boolean startupComplete
         ) {
+            this(elapsedMs, mediaProgressMs, renderedFrames, droppedFrames, startupComplete,
+                    renderedFrames > 0);
+        }
+
+        Observation(
+                long elapsedMs,
+                long mediaProgressMs,
+                int renderedFrames,
+                int droppedFrames,
+                boolean startupComplete,
+                boolean firstFrameRendered
+        ) {
             this.elapsedMs = Math.max(0L, elapsedMs);
             this.mediaProgressMs = Math.max(0L, mediaProgressMs);
             this.renderedFrames = Math.max(0, renderedFrames);
             this.droppedFrames = Math.max(0, droppedFrames);
             this.startupComplete = startupComplete;
+            this.firstFrameRendered = firstFrameRendered;
         }
     }
 
@@ -268,7 +283,8 @@ final class VideoResourceGovernor {
         double dropFraction = observedFrames > 0
                 ? (double) observation.droppedFrames / observedFrames
                 : 0d;
-        boolean sustainable = !snapshot.lowMemory
+        boolean sustainable = observation.firstFrameRendered
+                && !snapshot.lowMemory
                 && snapshot.thermalStatus < 4
                 && realtimeRatio >= 0.88d
                 && dropFraction <= 0.18d;
@@ -277,12 +293,12 @@ final class VideoResourceGovernor {
             sustainable = false;
         }
 
-        String observationReason = String.format(
+        String observationReason = observation.firstFrameRendered ? String.format(
                 Locale.US,
                 "software ratio %.2f, dropped %.1f%%",
                 realtimeRatio,
                 dropFraction * 100d
-        );
+        ) : "software decoder produced no first video frame";
         return new Decision(ceiling, true, sustainable, observationReason);
     }
 
