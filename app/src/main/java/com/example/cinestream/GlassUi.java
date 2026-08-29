@@ -1,14 +1,20 @@
 package com.example.cinestream;
 
+import android.app.Activity;
 import android.app.Dialog;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.net.Uri;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
@@ -27,6 +33,10 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import java.util.List;
 
 public final class GlassUi {
+
+    private static final String ABOUT_DIALOG_TITLE = "About CineStream";
+    private static final String CINESTREAM_REPOSITORY_URL =
+            "https://github.com/exor-26/CineStream";
 
     public interface ConfirmCallback {
         void onConfirm();
@@ -138,6 +148,14 @@ public final class GlassUi {
     }
 
     public static void showInfoDialog(Context context, String title, List<InfoItem> items) {
+        // Keep Detailed Info generic, but render the app-level About surface with its dedicated,
+        // deliberately sparse layout. MainActivity already routes its About button through this
+        // title, so this avoids changing media-inspection presentation or metadata extraction.
+        if (ABOUT_DIALOG_TITLE.equals(title)) {
+            showAboutDialog(context);
+            return;
+        }
+
         Dialog dialog = buildDialog(context, R.layout.dialog_glass_info);
         TextView titleView = dialog.findViewById(R.id.dialog_title);
         ViewGroup container = dialog.findViewById(R.id.info_rows);
@@ -158,6 +176,38 @@ public final class GlassUi {
 
         closeButton.setOnClickListener(v -> dialog.dismiss());
         dialog.show();
+    }
+
+    private static void showAboutDialog(Context context) {
+        Dialog dialog = buildDialog(context, R.layout.dialog_glass_about);
+        TextView titleView = dialog.findViewById(R.id.dialog_title);
+        TextView productView = dialog.findViewById(R.id.about_product_name);
+        TextView versionView = dialog.findViewById(R.id.about_version);
+        TextView repositoryView = dialog.findViewById(R.id.about_repository);
+        TextView closeButton = dialog.findViewById(R.id.dialog_close);
+
+        titleView.setText(ABOUT_DIALOG_TITLE);
+        productView.setText("CineStream Dev");
+        versionView.setText("Version " + BuildConfig.VERSION_NAME + " • MIT License");
+        repositoryView.setText(CINESTREAM_REPOSITORY_URL);
+        repositoryView.setContentDescription("Open CineStream GitHub repository");
+        repositoryView.setOnClickListener(v ->
+                openExternalUri(context, CINESTREAM_REPOSITORY_URL));
+        closeButton.setOnClickListener(v -> dialog.dismiss());
+        dialog.show();
+    }
+
+    private static void openExternalUri(Context context, String uriText) {
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriText));
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        if (!(context instanceof Activity)) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        }
+        try {
+            context.startActivity(intent);
+        } catch (ActivityNotFoundException | SecurityException ignored) {
+            showToast(context, "No browser is available to open this link.");
+        }
     }
 
     public static void showActionSheet(
@@ -227,6 +277,8 @@ public final class GlassUi {
         rightTitleView.setText(rightTitle);
 
         leftRecyclerView.setLayoutManager(new LinearLayoutManager(context));
+        leftRecyclerView.setNestedScrollingEnabled(true);
+        leftRecyclerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         leftRecyclerView.setAdapter(new ActionAdapter(leftItems, item -> {
             dialog.dismiss();
             if (leftCallback != null) {
@@ -235,6 +287,8 @@ public final class GlassUi {
         }));
 
         rightRecyclerView.setLayoutManager(new LinearLayoutManager(context));
+        rightRecyclerView.setNestedScrollingEnabled(true);
+        rightRecyclerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         rightRecyclerView.setAdapter(new ActionAdapter(rightItems, item -> {
             dialog.dismiss();
             if (rightCallback != null) {
@@ -244,24 +298,101 @@ public final class GlassUi {
 
         closeButton.setOnClickListener(v -> dialog.dismiss());
         dialog.setContentView(view);
-        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheet != null) {
-            bottomSheet.setBackground(new ColorDrawable(Color.TRANSPARENT));
+        FrameLayout sheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (sheet != null) {
+            sheet.setBackground(new ColorDrawable(Color.TRANSPARENT));
         }
         dialog.show();
 
-        if (context.getResources().getConfiguration().orientation
-                == Configuration.ORIENTATION_LANDSCAPE) {
-            FrameLayout sheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-            if (sheet != null) {
-                sheet.post(() -> {
-                    BottomSheetBehavior<FrameLayout> behavior = BottomSheetBehavior.from(sheet);
-                    behavior.setSkipCollapsed(true);
-                    behavior.setFitToContents(true);
-                    behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-                });
-            }
+        if (sheet != null) {
+            BottomSheetBehavior<FrameLayout> behavior = BottomSheetBehavior.from(sheet);
+            behavior.setSkipCollapsed(true);
+            behavior.setFitToContents(true);
+            behavior.setHideable(true);
+            behavior.setDraggable(true);
+
+            installBottomSheetScrollArbitration(context, leftRecyclerView, behavior);
+            installBottomSheetScrollArbitration(context, rightRecyclerView, behavior);
+
+            // Start fully expanded in every orientation so the track lists, not a partially
+            // collapsed parent sheet, receive the first vertical gesture.
+            sheet.post(() -> behavior.setState(BottomSheetBehavior.STATE_EXPANDED));
         }
+    }
+
+    private static void installBottomSheetScrollArbitration(
+            Context context,
+            RecyclerView recyclerView,
+            BottomSheetBehavior<FrameLayout> behavior
+    ) {
+        final int touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+
+        recyclerView.setOnTouchListener(new View.OnTouchListener() {
+            private float downY;
+            private boolean directionResolved;
+            private boolean childOwnsGesture = true;
+
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downY = event.getY();
+                        directionResolved = false;
+                        childOwnsGesture = true;
+                        // Protect the new gesture until its direction crosses touch slop. This is
+                        // what prevents a fresh upward drag from being captured by the sheet.
+                        behavior.setDraggable(false);
+                        view.getParent().requestDisallowInterceptTouchEvent(true);
+                        break;
+
+                    case MotionEvent.ACTION_MOVE:
+                        float deltaY = event.getY() - downY;
+                        if (!directionResolved && Math.abs(deltaY) >= touchSlop) {
+                            directionResolved = true;
+                            childOwnsGesture = shouldActionListOwnVerticalGesture(
+                                    deltaY,
+                                    touchSlop,
+                                    recyclerView.canScrollVertically(-1)
+                            );
+                            behavior.setDraggable(!childOwnsGesture);
+                            view.getParent().requestDisallowInterceptTouchEvent(childOwnsGesture);
+                        } else if (directionResolved) {
+                            // Ownership stays fixed for the rest of this gesture. If a downward
+                            // drag began while the list was not at the top, reaching the top later
+                            // does not hand the same gesture to the parent unexpectedly.
+                            behavior.setDraggable(!childOwnsGesture);
+                            view.getParent().requestDisallowInterceptTouchEvent(childOwnsGesture);
+                        }
+                        break;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        behavior.setDraggable(true);
+                        view.getParent().requestDisallowInterceptTouchEvent(false);
+                        directionResolved = false;
+                        childOwnsGesture = true;
+                        break;
+
+                    default:
+                        break;
+                }
+                // RecyclerView still receives the event for normal scrolling and item selection.
+                return false;
+            }
+        });
+    }
+
+    static boolean shouldActionListOwnVerticalGesture(
+            float deltaY,
+            int touchSlop,
+            boolean canScrollUp
+    ) {
+        if (Math.abs(deltaY) < touchSlop) {
+            return true;
+        }
+        // Finger moving upward always belongs to the list. Finger moving downward belongs to the
+        // list until it is genuinely at the top; only then may the sheet handle dismissal.
+        return deltaY < 0f || canScrollUp;
     }
 
     private static Dialog buildDialog(Context context, int layoutRes) {
