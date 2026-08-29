@@ -10,5 +10,10 @@
     <string name="fill">Fill</string>
     <string name="fit">Fit</string>
     <string name="lock">Lock</string>
+    <string name="screen_lock_description">Lock player controls</string>
+    <string name="screen_locked">Locked</string>
+    <string name="screen_unlocked">Unlocked</string>
+    <string name="unlock_hint">Swipe right from bottom left to unlock  →</string>
+    <string name="screen_locked_accessibility">Screen locked. Swipe right from the bottom left to unlock.</string>
     <string name="about_project">About Project</string>
 </resources>

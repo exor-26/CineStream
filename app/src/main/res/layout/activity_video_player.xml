@@ -7,8 +7,9 @@
     android:fitsSystemWindows="false"
     android:background="@android:color/black">
 
-    <!-- PlayerView — untouched -->
-    <androidx.media3.ui.PlayerView
+    <!-- UnifiedPlayerView owns surface-gesture arbitration. The activity remains responsible for
+         the existing playback, brightness, volume, crop, audio and compatibility behavior. -->
+    <com.example.cinestream.UnifiedPlayerView
         android:id="@+id/player_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
@@ -28,7 +29,6 @@
         android:paddingBottom="8dp"
         android:clipToPadding="false">
 
-        <!-- Back button — flush to left edge -->
         <ImageButton
             android:id="@+id/btn_back"
             android:layout_width="52dp"
@@ -39,7 +39,6 @@
             android:scaleType="fitCenter"
             android:padding="14dp" />
 
-        <!-- Video name -->
         <TextView
             android:id="@+id/tv_video_name"
             android:layout_width="0dp"
@@ -61,7 +60,6 @@
             android:shadowDy="1"
             android:shadowRadius="4" />
 
-        <!-- Rotate -->
         <ImageButton
             android:id="@+id/btn_rotate"
             android:layout_width="44dp"
@@ -72,7 +70,6 @@
             android:contentDescription="@string/rotate_description"
             android:scaleType="fitCenter" />
 
-        <!-- Crop -->
         <ImageButton
             android:id="@+id/btn_crop"
             android:layout_width="44dp"
@@ -83,7 +80,6 @@
             android:contentDescription="@string/crop_options"
             android:scaleType="fitCenter" />
 
-        <!-- Audio Track -->
         <ImageButton
             android:id="@+id/audio_track"
             android:layout_width="44dp"
@@ -94,6 +90,62 @@
             android:contentDescription="@string/audio_track_description"
             android:scaleType="fitCenter" />
 
+    </LinearLayout>
+
+    <!-- A small persistent lock affordance stays available even when Media3 controls auto-hide.
+         It disappears while locked; deliberate bottom-left swipe is then the only app unlock path. -->
+    <com.example.cinestream.ScreenLockButton
+        android:id="@+id/btn_screen_lock"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="start|center_vertical"
+        android:layout_marginStart="8dp"
+        android:alpha="0.82"
+        android:background="@drawable/overlay_background"
+        android:contentDescription="@string/screen_lock_description"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_screen_lock" />
+
+    <TextView
+        android:id="@+id/gesture_feedback"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/overlay_background"
+        android:fontFamily="sans-serif-medium"
+        android:importantForAccessibility="no"
+        android:paddingStart="18dp"
+        android:paddingTop="11dp"
+        android:paddingEnd="18dp"
+        android:paddingBottom="11dp"
+        android:textColor="#F5F7FB"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/unlock_hint_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="58dp"
+        android:background="@drawable/overlay_background"
+        android:gravity="center_vertical"
+        android:importantForAccessibility="no"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="10dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:text="@string/unlock_hint"
+            android:textColor="#E7EDF8"
+            android:textSize="13sp" />
     </LinearLayout>
 
     <!-- Volume overlay -->
