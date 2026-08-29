@@ -1,7 +1,9 @@
 package com.example.cinestream;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Rect;
+import android.os.Build;
 import android.util.AttributeSet;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -15,6 +17,7 @@ import android.widget.TextView;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
 import androidx.media3.common.Timeline;
 import androidx.media3.common.util.UnstableApi;
@@ -33,11 +36,13 @@ public final class UnifiedPlayerView extends PlayerView {
     private final PlayerGestureStateMachine gestureStateMachine =
             new PlayerGestureStateMachine();
     private final int touchSlop;
+    private final int longPressTimeoutMs;
     private final Rect hitRect = new Rect();
     private final ScaleGestureDetector scaleGestureDetector;
 
     private boolean nativeControllerOwnsGesture;
     private boolean delegatedGestureCancelled;
+
     private float currentZoom = 1f;
     private int lastZoomPercentage = 100;
     private PlayerCropMode cropMode = PlayerCropMode.ORIGINAL;
@@ -49,19 +54,34 @@ public final class UnifiedPlayerView extends PlayerView {
     private long seekTargetMs;
     private long lastPresentedSeekTargetMs = Long.MIN_VALUE;
 
+    private boolean temporarySpeedCandidate;
+    private boolean temporarySpeedActive;
+    private Player temporarySpeedPlayer;
+    private PlaybackParameters previousPlaybackParameters;
+
     private final Runnable hideFeedbackRunnable = this::animateFeedbackOut;
     private final Runnable hideUnlockHintRunnable = this::animateUnlockHintOut;
+    private final Runnable temporarySpeedHoldRunnable = this::activateTemporarySpeed;
 
     private final Player.Listener internalPlayerListener = new Player.Listener() {
         @Override
         public void onMediaItemTransition(@Nullable MediaItem mediaItem, int reason) {
+            cancelTemporarySpeed(true);
             handleLogicalMediaIdentity(mediaItem);
         }
 
         @Override
         public void onPlaybackStateChanged(int playbackState) {
-            if (playbackState == Player.STATE_ENDED) {
+            if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                cancelTemporarySpeed(true);
                 cancelSeekPreview(true);
+            }
+        }
+
+        @Override
+        public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+            if (!playWhenReady) {
+                cancelTemporarySpeed(true);
             }
         }
     };
@@ -73,6 +93,7 @@ public final class UnifiedPlayerView extends PlayerView {
     public UnifiedPlayerView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        longPressTimeoutMs = ViewConfiguration.getLongPressTimeout();
         scaleGestureDetector = new ScaleGestureDetector(
                 context,
                 new ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -122,11 +143,13 @@ public final class UnifiedPlayerView extends PlayerView {
     @Override
     public void setPlayer(@Nullable Player player) {
         Player previous = getPlayer();
-        if (previous != null && internalPlayerListener != null) {
+        cancelTemporarySpeed(true);
+        cancelSeekPreview(true);
+        if (previous != null) {
             previous.removeListener(internalPlayerListener);
         }
         super.setPlayer(player);
-        if (player != null && internalPlayerListener != null) {
+        if (player != null) {
             player.addListener(internalPlayerListener);
             handleLogicalMediaIdentity(player.getCurrentMediaItem());
         }
@@ -141,15 +164,22 @@ public final class UnifiedPlayerView extends PlayerView {
         }
 
         if (action == MotionEvent.ACTION_DOWN) {
+            cancelTemporarySpeed(true);
+            cancelGestureFeedback();
             delegatedGestureCancelled = false;
             nativeControllerOwnsGesture = isTouchOnInteractiveControllerChild(event);
             gestureStateMachine.beginGesture(
                     event.getX(), event.getY(), getWidth(), getHeight());
             scaleGestureDetector.onTouchEvent(event);
+            if (!nativeControllerOwnsGesture
+                    && TemporarySpeedGestureLogic.startsOnRightHalf(event.getX(), getWidth())) {
+                startTemporarySpeedCandidate();
+            }
             return super.dispatchTouchEvent(event);
         }
 
         if (action == MotionEvent.ACTION_POINTER_DOWN && event.getPointerCount() >= 2) {
+            cancelTemporarySpeed(true);
             gestureStateMachine.onPointerCountChanged(event.getPointerCount());
             nativeControllerOwnsGesture = false;
             cancelSeekPreview(true);
@@ -162,6 +192,7 @@ public final class UnifiedPlayerView extends PlayerView {
         if (nativeControllerOwnsGesture) {
             boolean handled = super.dispatchTouchEvent(event);
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                cancelTemporarySpeed(true);
                 finishGesture();
             }
             return handled;
@@ -170,6 +201,7 @@ public final class UnifiedPlayerView extends PlayerView {
         switch (action) {
             case MotionEvent.ACTION_MOVE:
                 if (event.getPointerCount() >= 2) {
+                    cancelTemporarySpeed(true);
                     gestureStateMachine.onPointerCountChanged(event.getPointerCount());
                     cancelSeekPreview(true);
                     cancelDelegatedGesture(event);
@@ -178,27 +210,43 @@ public final class UnifiedPlayerView extends PlayerView {
                     return true;
                 }
 
+                if (TemporarySpeedGestureLogic.movedBeyondSlop(
+                        gestureStateMachine.getDownX(),
+                        gestureStateMachine.getDownY(),
+                        event.getX(),
+                        event.getY(),
+                        touchSlop)) {
+                    if (temporarySpeedActive) {
+                        cancelTemporarySpeed(true);
+                        return true;
+                    }
+                    cancelTemporarySpeedCandidate();
+                }
+
                 PlayerGestureStateMachine.Owner owner =
                         gestureStateMachine.classifyUnlockedMove(
                                 event.getX(), event.getY(), getWidth(), touchSlop);
                 if (owner == PlayerGestureStateMachine.Owner.BRIGHTNESS
                         || owner == PlayerGestureStateMachine.Owner.VOLUME) {
+                    cancelTemporarySpeed(true);
+                    cancelGestureFeedback();
                     return dispatchOwnedVerticalEvent(event, owner);
                 }
                 if (owner == PlayerGestureStateMachine.Owner.SEEK) {
+                    cancelTemporarySpeed(true);
                     cancelDelegatedGesture(event);
                     hideController();
                     updateSeekPreview(event.getX() - gestureStateMachine.getDownX());
                     return true;
                 }
                 if (owner == PlayerGestureStateMachine.Owner.PINCH_ZOOM) {
+                    cancelTemporarySpeed(true);
                     cancelDelegatedGesture(event);
                     hideController();
                     scaleGestureDetector.onTouchEvent(event);
                     return true;
                 }
                 if (owner == PlayerGestureStateMachine.Owner.TEMP_SPEED) {
-                    cancelDelegatedGesture(event);
                     return true;
                 }
                 return true;
@@ -207,20 +255,26 @@ public final class UnifiedPlayerView extends PlayerView {
                 if (gestureStateMachine.getOwner()
                         == PlayerGestureStateMachine.Owner.PINCH_ZOOM) {
                     scaleGestureDetector.onTouchEvent(event);
-                    return true;
                 }
                 return true;
 
             case MotionEvent.ACTION_UP:
                 PlayerGestureStateMachine.Owner finalOwner = gestureStateMachine.getOwner();
                 boolean handled = true;
-                if (finalOwner == PlayerGestureStateMachine.Owner.SEEK) {
+                if (finalOwner == PlayerGestureStateMachine.Owner.TEMP_SPEED
+                        || temporarySpeedActive) {
+                    cancelTemporarySpeed(true);
+                } else if (finalOwner == PlayerGestureStateMachine.Owner.SEEK) {
+                    cancelTemporarySpeedCandidate();
                     commitSeekPreview();
                 } else if (!delegatedGestureCancelled
                         && (finalOwner == PlayerGestureStateMachine.Owner.PENDING
                         || finalOwner == PlayerGestureStateMachine.Owner.BRIGHTNESS
                         || finalOwner == PlayerGestureStateMachine.Owner.VOLUME)) {
+                    cancelTemporarySpeedCandidate();
                     handled = super.dispatchTouchEvent(event);
+                } else {
+                    cancelTemporarySpeedCandidate();
                 }
                 if (finalOwner == PlayerGestureStateMachine.Owner.PINCH_ZOOM) {
                     scaleGestureDetector.onTouchEvent(event);
@@ -233,6 +287,7 @@ public final class UnifiedPlayerView extends PlayerView {
                         == PlayerGestureStateMachine.Owner.PINCH_ZOOM) {
                     scaleGestureDetector.onTouchEvent(event);
                 }
+                cancelTemporarySpeed(true);
                 cancelSeekPreview(true);
                 if (!delegatedGestureCancelled) {
                     super.dispatchTouchEvent(event);
@@ -262,17 +317,92 @@ public final class UnifiedPlayerView extends PlayerView {
         return handled;
     }
 
+    private void startTemporarySpeedCandidate() {
+        cancelTemporarySpeedCandidate();
+        temporarySpeedCandidate = true;
+        postDelayed(temporarySpeedHoldRunnable, longPressTimeoutMs);
+    }
+
+    private void cancelTemporarySpeedCandidate() {
+        temporarySpeedCandidate = false;
+        removeCallbacks(temporarySpeedHoldRunnable);
+    }
+
+    private void activateTemporarySpeed() {
+        if (!temporarySpeedCandidate
+                || gestureStateMachine.isLocked()
+                || gestureStateMachine.getOwner() != PlayerGestureStateMachine.Owner.PENDING) {
+            cancelTemporarySpeedCandidate();
+            return;
+        }
+        Player player = getPlayer();
+        if (player == null
+                || !player.getAvailableCommands().contains(Player.COMMAND_SET_SPEED_AND_PITCH)
+                || !gestureStateMachine.claimTemporarySpeed()) {
+            cancelTemporarySpeedCandidate();
+            return;
+        }
+
+        cancelTemporarySpeedCandidate();
+        cancelSeekPreview(true);
+        cancelDelegatedGestureWithoutSource();
+        temporarySpeedPlayer = player;
+        previousPlaybackParameters = player.getPlaybackParameters();
+        player.setPlaybackSpeed(2f);
+        temporarySpeedActive = true;
+        hideController();
+        showFeedback(getResources().getString(R.string.temporary_speed_feedback), false);
+        announceForAccessibility(
+                getResources().getString(R.string.temporary_speed_accessibility));
+    }
+
+    private void cancelTemporarySpeed(boolean hideFeedback) {
+        boolean wasActive = temporarySpeedActive;
+        cancelTemporarySpeedCandidate();
+        if (temporarySpeedActive
+                && temporarySpeedPlayer != null
+                && previousPlaybackParameters != null
+                && temporarySpeedPlayer.getAvailableCommands()
+                .contains(Player.COMMAND_SET_SPEED_AND_PITCH)) {
+            temporarySpeedPlayer.setPlaybackParameters(previousPlaybackParameters);
+        }
+        temporarySpeedActive = false;
+        temporarySpeedPlayer = null;
+        previousPlaybackParameters = null;
+        if (hideFeedback && wasActive) {
+            cancelGestureFeedback();
+        }
+    }
+
+    private void cancelDelegatedGestureWithoutSource() {
+        if (delegatedGestureCancelled) {
+            return;
+        }
+        long now = android.os.SystemClock.uptimeMillis();
+        MotionEvent cancel = MotionEvent.obtain(
+                now,
+                now,
+                MotionEvent.ACTION_CANCEL,
+                gestureStateMachine.getDownX(),
+                gestureStateMachine.getDownY(),
+                0
+        );
+        super.dispatchTouchEvent(cancel);
+        cancel.recycle();
+        delegatedGestureCancelled = true;
+    }
+
     public void cycleCropMode(@Nullable View hapticSource) {
         if (gestureStateMachine.isLocked()) {
             return;
         }
+        cancelTemporarySpeed(true);
         cropMode = cropMode.next();
         currentZoom = 1f;
         lastZoomPercentage = 100;
         applyCropMode();
         applyVideoSurfaceScale();
         updateCropButtonPresentation(hapticSource);
-        hideTransientAdjustmentOverlays();
         showFeedback(cropModeLabel(), true);
     }
 
@@ -282,8 +412,6 @@ public final class UnifiedPlayerView extends PlayerView {
                 setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
                 break;
             case FILL:
-                // Cover the player while preserving the source aspect ratio. The previous FILL
-                // mode stretched pixels, which conflicts with continuous aspect-safe zoom.
                 setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
                 break;
             case FIT:
@@ -342,6 +470,7 @@ public final class UnifiedPlayerView extends PlayerView {
         currentLogicalMediaId = nextId;
         currentZoom = 1f;
         lastZoomPercentage = 100;
+        cancelTemporarySpeed(true);
         cancelSeekPreview(true);
         finishGesture();
         post(this::applyVideoSurfaceScale);
@@ -376,7 +505,6 @@ public final class UnifiedPlayerView extends PlayerView {
             return;
         }
         lastZoomPercentage = percentage;
-        hideTransientAdjustmentOverlays();
         showFeedback(percentage + "%", false);
     }
 
@@ -412,7 +540,6 @@ public final class UnifiedPlayerView extends PlayerView {
         String preview = arrow
                 + " " + sign + PlayerGestureMath.formatTimestamp(Math.abs(deltaMs))
                 + " • " + PlayerGestureMath.formatTimestamp(seekTargetMs);
-        hideTransientAdjustmentOverlays();
         showFeedback(preview, false);
     }
 
@@ -448,7 +575,7 @@ public final class UnifiedPlayerView extends PlayerView {
         seekDurationMs = 0L;
         seekTargetMs = 0L;
         lastPresentedSeekTargetMs = Long.MIN_VALUE;
-        if (hideFeedback) {
+        if (hideFeedback && !temporarySpeedActive) {
             cancelGestureFeedback();
         }
     }
@@ -472,7 +599,6 @@ public final class UnifiedPlayerView extends PlayerView {
             return new LogicalTimelineSnapshot(
                     currentIndex < 0 ? 0 : currentIndex,
                     new long[]{duration},
-                    0,
                     Math.max(0L, player.getCurrentPosition()),
                     duration
             );
@@ -509,7 +635,6 @@ public final class UnifiedPlayerView extends PlayerView {
         return new LogicalTimelineSnapshot(
                 first,
                 durations,
-                currentOffset,
                 logicalPosition,
                 logicalDuration
         );
@@ -561,10 +686,11 @@ public final class UnifiedPlayerView extends PlayerView {
             return;
         }
 
+        cancelTemporarySpeed(true);
+        cancelSeekPreview(true);
         gestureStateMachine.setLocked(true);
         nativeControllerOwnsGesture = false;
         delegatedGestureCancelled = true;
-        cancelSeekPreview(true);
 
         hideController();
         setUseController(false);
@@ -582,6 +708,7 @@ public final class UnifiedPlayerView extends PlayerView {
     private boolean handleLockedTouch(MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                cancelTemporarySpeed(true);
                 gestureStateMachine.beginGesture(
                         event.getX(), event.getY(), getWidth(), getHeight());
                 return true;
@@ -630,11 +757,9 @@ public final class UnifiedPlayerView extends PlayerView {
         gestureStateMachine.setLocked(false);
         finishGesture();
         cancelUnlockHint();
-
         setUseController(true);
         setPlayerControlsEnabled(true);
         showController();
-
         performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
         showFeedback(getResources().getString(R.string.screen_unlocked), true);
         announceForAccessibility(getResources().getString(R.string.screen_unlocked));
@@ -716,7 +841,13 @@ public final class UnifiedPlayerView extends PlayerView {
         }
     }
 
+    private boolean animationsEnabled() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                || ValueAnimator.areAnimatorsEnabled();
+    }
+
     private void showFeedback(String text, boolean autoHide) {
+        hideTransientAdjustmentOverlays();
         TextView feedback = getRootView().findViewById(R.id.gesture_feedback);
         if (feedback == null) {
             return;
@@ -724,7 +855,12 @@ public final class UnifiedPlayerView extends PlayerView {
         feedback.removeCallbacks(hideFeedbackRunnable);
         feedback.animate().cancel();
         feedback.setText(text);
-        if (feedback.getVisibility() != View.VISIBLE) {
+        if (!animationsEnabled()) {
+            feedback.setAlpha(1f);
+            feedback.setScaleX(1f);
+            feedback.setScaleY(1f);
+            feedback.setVisibility(View.VISIBLE);
+        } else if (feedback.getVisibility() != View.VISIBLE) {
             feedback.setVisibility(View.VISIBLE);
             feedback.setAlpha(0f);
             feedback.setScaleX(0.92f);
@@ -760,6 +896,11 @@ public final class UnifiedPlayerView extends PlayerView {
             return;
         }
         feedback.animate().cancel();
+        if (!animationsEnabled()) {
+            feedback.setVisibility(View.GONE);
+            feedback.setAlpha(0f);
+            return;
+        }
         feedback.animate()
                 .alpha(0f)
                 .scaleX(0.96f)
@@ -777,13 +918,18 @@ public final class UnifiedPlayerView extends PlayerView {
         hint.removeCallbacks(hideUnlockHintRunnable);
         hint.animate().cancel();
         hint.setVisibility(View.VISIBLE);
-        hint.setAlpha(0f);
-        hint.setTranslationX(-12f * getResources().getDisplayMetrics().density);
-        hint.animate()
-                .alpha(1f)
-                .translationX(0f)
-                .setDuration(180L)
-                .start();
+        if (!animationsEnabled()) {
+            hint.setAlpha(1f);
+            hint.setTranslationX(0f);
+        } else {
+            hint.setAlpha(0f);
+            hint.setTranslationX(-12f * getResources().getDisplayMetrics().density);
+            hint.animate()
+                    .alpha(1f)
+                    .translationX(0f)
+                    .setDuration(180L)
+                    .start();
+        }
         hint.postDelayed(hideUnlockHintRunnable, UNLOCK_HINT_VISIBLE_MS);
     }
 
@@ -793,6 +939,11 @@ public final class UnifiedPlayerView extends PlayerView {
             return;
         }
         hint.animate().cancel();
+        if (!animationsEnabled()) {
+            hint.setVisibility(View.GONE);
+            hint.setAlpha(0f);
+            return;
+        }
         hint.animate()
                 .alpha(0f)
                 .translationX(18f * getResources().getDisplayMetrics().density)
@@ -826,18 +977,22 @@ public final class UnifiedPlayerView extends PlayerView {
         feedback.setVisibility(View.GONE);
     }
 
-    private void resetLockWithoutFeedback() {
+    private void resetTransientPlayerUi() {
+        cancelTemporarySpeed(true);
         cancelSeekPreview(true);
+        cancelUnlockHint();
+        cancelGestureFeedback();
+        removeCallbacks(temporarySpeedHoldRunnable);
+        hideTransientAdjustmentOverlays();
+        finishGesture();
+    }
+
+    private void resetLockWithoutFeedback() {
+        resetTransientPlayerUi();
         if (!gestureStateMachine.isLocked()) {
-            cancelUnlockHint();
-            cancelGestureFeedback();
-            finishGesture();
             return;
         }
         gestureStateMachine.setLocked(false);
-        finishGesture();
-        cancelUnlockHint();
-        cancelGestureFeedback();
         setUseController(true);
         setPlayerControlsEnabled(true);
     }
@@ -870,27 +1025,23 @@ public final class UnifiedPlayerView extends PlayerView {
         static final LogicalTimelineSnapshot EMPTY = new LogicalTimelineSnapshot(
                 0,
                 new long[0],
-                0,
                 -1L,
                 0L
         );
 
         final int firstWindowIndex;
         final long[] windowDurationsMs;
-        final int currentWindowOffset;
         final long positionMs;
         final long durationMs;
 
         LogicalTimelineSnapshot(
                 int firstWindowIndex,
                 long[] windowDurationsMs,
-                int currentWindowOffset,
                 long positionMs,
                 long durationMs
         ) {
             this.firstWindowIndex = firstWindowIndex;
             this.windowDurationsMs = windowDurationsMs;
-            this.currentWindowOffset = currentWindowOffset;
             this.positionMs = positionMs;
             this.durationMs = durationMs;
         }

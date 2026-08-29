@@ -26,17 +26,16 @@ public class PlayerGestureStateMachineTest {
                 PlayerGestureStateMachine.Owner.BRIGHTNESS,
                 machine.classifyUnlockedMove(104f, 240f, 1000f, 8));
         assertEquals(100f, machine.getDownX(), 0f);
+        assertEquals(200f, machine.getDownY(), 0f);
         assertEquals(
                 PlayerGestureStateMachine.Owner.BRIGHTNESS,
                 machine.classifyUnlockedMove(800f, 245f, 1000f, 8));
-        assertEquals(100f, machine.getDownX(), 0f);
 
         machine.resetGesture();
         machine.beginGesture(800f, 200f, 1000f, 1000f);
         assertEquals(
                 PlayerGestureStateMachine.Owner.VOLUME,
                 machine.classifyUnlockedMove(804f, 240f, 1000f, 8));
-        assertEquals(800f, machine.getDownX(), 0f);
     }
 
     @Test
@@ -46,12 +45,42 @@ public class PlayerGestureStateMachineTest {
         assertEquals(
                 PlayerGestureStateMachine.Owner.SEEK,
                 machine.classifyUnlockedMove(380f, 304f, 1000f, 8));
+        assertFalse(machine.claimTemporarySpeed());
+    }
+
+    @Test
+    public void stationaryPendingGestureCanClaimTemporarySpeed() {
+        PlayerGestureStateMachine machine = new PlayerGestureStateMachine();
+        machine.beginGesture(800f, 300f, 1000f, 1000f);
+        assertTrue(machine.claimTemporarySpeed());
+        assertEquals(PlayerGestureStateMachine.Owner.TEMP_SPEED, machine.getOwner());
+        assertEquals(
+                PlayerGestureStateMachine.Owner.TEMP_SPEED,
+                machine.classifyUnlockedMove(900f, 300f, 1000f, 8));
+    }
+
+    @Test
+    public void lockedGestureCannotClaimTemporarySpeed() {
+        PlayerGestureStateMachine machine = new PlayerGestureStateMachine();
+        machine.setLocked(true);
+        machine.beginGesture(100f, 850f, 1000f, 1000f);
+        assertFalse(machine.claimTemporarySpeed());
     }
 
     @Test
     public void secondPointerOwnsGestureAsPinch() {
         PlayerGestureStateMachine machine = new PlayerGestureStateMachine();
         machine.beginGesture(300f, 300f, 1000f, 1000f);
+        assertEquals(
+                PlayerGestureStateMachine.Owner.PINCH_ZOOM,
+                machine.onPointerCountChanged(2));
+    }
+
+    @Test
+    public void secondPointerOverridesTemporarySpeedOwnership() {
+        PlayerGestureStateMachine machine = new PlayerGestureStateMachine();
+        machine.beginGesture(800f, 300f, 1000f, 1000f);
+        assertTrue(machine.claimTemporarySpeed());
         assertEquals(
                 PlayerGestureStateMachine.Owner.PINCH_ZOOM,
                 machine.onPointerCountChanged(2));

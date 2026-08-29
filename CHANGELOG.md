@@ -4,8 +4,20 @@ All notable changes to this project should be documented in this file.
 
 ## 9.4 - 2026-08-29
 
+### Added
+
+- Continuous two-finger pinch zoom with bounded aspect-safe video-surface scaling and live percentage feedback
+- One-finger horizontal seek with duration-aware mapping, logical-timeline clamping, signed delta, and target timestamp preview
+- Screen lock with deliberate bottom-left left-to-right swipe unlock, haptic confirmation, and transient unlock guidance
+- Right-half stationary touch-and-hold temporary 2× playback with exact Media3 playback-parameter restoration on release or cancellation
+- Direct crop-mode cycling through the existing Original → Fill → Fit sequence with transient mode feedback
+- Professional CineStream Dev information view with a guarded clickable repository entry
+
 ### Changed
 
+- Player-surface interactions now use sticky gesture ownership so pinch, seek, brightness, volume, temporary speed, lock, and taps do not steal an already classified gesture
+- Gesture feedback uses coordinated transient presentation and respects the system animator setting where supported
+- Crop selection resets continuous zoom to the selected mode's 100% baseline and avoids aspect-ratio stretching
 - High-resolution CineFFmpeg recovery now uses a bounded, memory-aware decoder thread pool and decoder-safe fast mode without deleting presentation frames
 - Software playback starts after a real decoded frame is available, then continues under Media3 timestamp, A/V-sync, and frame-drop control
 - Unsustainable direct playback releases its source decoder before H.264 compatibility generation so playback and export do not compete for the same CPU and native memory
@@ -13,11 +25,12 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Audio/subtitle track lists now retain scroll ownership across separate upward and downward gestures while allowing sheet dismissal only from the real list top
 - Black 10-bit HDR output caused by incompatible GLES sampler types sharing texture unit zero
 - Runtime MediaCodec lifecycle failures that were not previously classified as recoverable video failures
 - False 100% software drop reports caused by `DecoderVideoRenderer` not forwarding rendered-frame counts
 - Multi-second frame gaps caused by discarding non-reference HEVC frames in governed software mode
-- Repeated black handoffs and severe memory/CPU contention when direct 4K software playback and compatibility generation ran concurrently
+- Repeated black handoffs and severe memory/CPU contention when direct high-resolution software playback and compatibility generation ran concurrently
 
 ## 9.3 - 2026-08-24
 
@@ -34,11 +47,11 @@ All notable changes to this project should be documented in this file.
 - Replay cache discovery runs independently of library and thumbnail work
 - Progressive generation resumes at the safest quality tier already proven by cached segments
 - Original audio remains active while full-file compatibility video is prepared
-- Removed a redundant metadata-only native FFmpeg/OpenSSL bundle, reducing the arm64 release from about 26 MB to about 14 MB without removing playback codecs
+- Removed a redundant metadata-only native FFmpeg/OpenSSL bundle, reducing release size without removing playback codecs
 
 ### Fixed
 
-- Android 11 release crash caused by R8 merging an Android 12 media-metrics signature into a pre-Android-12 class-loading path
+- Pre-Android-12 release crash caused by R8 merging a newer media-metrics signature into an older class-loading path
 - Blank replay caused by completed progressive fragments being rejected or delayed during cache discovery
 - Repeated replay regeneration at an unnecessarily high compatibility tier
 - 480p30 being treated as if the final 480p24 recovery tier had already been measured

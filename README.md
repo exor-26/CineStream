@@ -12,16 +12,38 @@ CineStream is a local Android video player focused on fast on-device browsing, b
 - Share videos through scoped-storage-safe `content://` URIs
 - Rename and delete media through modern `MediaStore` flows
 - Support external `ACTION_VIEW` playback intents
-- Custom player gestures for brightness and volume
-- Audio track selection, crop modes, and orientation lock controls
+- Continuous two-finger pinch zoom with a live percentage preview
+- One-finger horizontal seek with signed delta and target-time preview
+- Left-side brightness and right-side volume gestures with sticky gesture ownership
+- Right-half touch-and-hold temporary 2× playback with exact prior-speed restoration
+- Screen lock with deliberate bottom-left left-to-right swipe unlock
+- Direct crop-mode cycling without a popup, preserving source aspect ratio
+- Reliable bidirectional audio/subtitle track-list scrolling inside the player sheet
+- Professional CineStream Dev information view with guarded repository opening
+- Audio track selection, captions, orientation controls, loudness enhancement, and volume boost
 - Hardware-first playback with direct CineFFmpeg software recovery
 - Runtime-governed H.264 compatibility playback for unsupported or unsustainable video
 - Validated compatibility caching for stable, faster replay
 - Original audio, subtitle, metadata, and track-selection sources remain separate from compatibility video
 
+## Player gesture arbitration
+
+Player surface gestures use one ownership model so an interaction does not change meaning after it has been classified:
+
+```text
+Locked state: unlock swipe only
+→ two or more pointers: pinch zoom
+→ stationary right-half hold: temporary 2×
+→ one-finger horizontal drag: seek
+→ one-finger vertical drag: brightness (left) / volume (right)
+→ unclassified tap: normal controller interaction
+```
+
+The lock state disables player controls and app-level gestures without trapping Android system navigation. Temporary 2× playback snapshots the exact active Media3 playback parameters and restores them on release, cancellation, media transition, pause, end, player replacement, or lifecycle teardown.
+
 ## Video compatibility flow
 
-Playback decisions use runtime codec results, memory pressure, CPU load, thermal state, source complexity, and measured decoding speed. They do not use manufacturer, model, chipset, or serial-number allowlists.
+Playback decisions use runtime codec results, memory pressure, CPU load, thermal state, source complexity, and measured decoding speed. They do not use manufacturer, model, chipset, board, product, serial, or device-name playback rules.
 
 ```text
 MediaCodec hardware playback
@@ -37,7 +59,7 @@ For high-resolution sources that cannot remain near realtime, CineStream measure
 
 ## Why this project matters
 
-Older Android media apps often depend on raw file paths and broad storage permissions. That model breaks down on modern Android versions and creates Play Store policy risk. CineStream has been refactored to use `MediaStore` and content URIs as the primary storage model so it behaves correctly across Android 10 through Android 16-class devices.
+Older Android media apps often depend on raw file paths and broad storage permissions. That model breaks down on modern Android versions and creates Play Store policy risk. CineStream uses `MediaStore` and content URIs as the primary storage model so it behaves correctly across current Android storage models.
 
 ## Tech stack
 
@@ -53,64 +75,54 @@ Older Android media apps often depend on raw file paths and broad storage permis
 
 ## Project structure
 
-- `app/src/main/java/com/example/cinestream/MainActivity.java`
+- `app/src/main/java/com/example/cinestream/MainActivity.java`  
   Main library screen, permission flow, MediaStore loading, folder grouping, rename/delete orchestration
-- `app/src/main/java/com/example/cinestream/VideoAdapter.java`
+- `app/src/main/java/com/example/cinestream/VideoAdapter.java`  
   Video row binding, thumbnail loading, metadata display, share/info actions
-- `app/src/main/java/com/example/cinestream/VideoPlayerActivity.java`
-  Full-screen player, playback resume, gestures, crop/rotation/audio-track controls
-- `app/src/main/java/com/example/cinestream/PlaybackPrefs.java`
+- `app/src/main/java/com/example/cinestream/VideoPlayerActivity.java`  
+  Full-screen player, playback resume, brightness/volume execution, rotation, tracks, and compatibility lifecycle
+- `app/src/main/java/com/example/cinestream/UnifiedPlayerView.java`  
+  Player-surface gesture arbitration, screen lock, pinch zoom, logical seeking, temporary speed, crop cycling, and transient gesture feedback
+- `app/src/main/java/com/example/cinestream/PlaybackPrefs.java`  
   Lightweight playback progress persistence
-- `app/src/main/java/com/example/cinestream/VideoFile.java`
+- `app/src/main/java/com/example/cinestream/VideoFile.java`  
   Media model built around stable IDs and `content://` URIs
 
 ## Storage model
 
-CineStream now uses:
+CineStream uses:
 
 - `MediaStore` as the source of truth for device video discovery
 - stable media IDs and `content://` URIs for playback and sharing
 - `MediaStore` rename/delete mutation APIs for scoped storage compatibility
 - runtime media permissions instead of `MANAGE_EXTERNAL_STORAGE`
 
-This is the core architectural decision that keeps the app compatible with modern Android.
-
 ## Build requirements
 
 - Android Studio with bundled JBR
-- JDK 21 through Android Studio JBR is configured in `gradle.properties`
+- JDK 21 through Android Studio JBR as configured in `gradle.properties`
 - Android SDK with `compileSdk 35`
+- Android NDK `26.1.10909125`
+- CMake `3.22.1`
 
 ## Build
 
 ```powershell
-.\gradlew.bat assembleDebug
+.\gradlew.bat testDebugUnitTest assembleRelease
 ```
 
-Debug APK output:
+Release builds are split by ABI:
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
+- `arm64-v8a`
+- `armeabi-v7a`
+
+The release packaging intentionally does not generate a universal APK.
 
 ## Tested status
 
-The release flow has been exercised on physical Vivo, Realme, and older Android devices. The exact 7680×4320 60 fps Dolby Vision Profile 5 test file and a 3840×1920 HEVC Main 10 HDR source were used for compatibility and replay investigation.
+The core release flow has previously been exercised on physical Android hardware, including app launch, `MediaStore` library loading, player entry, external `ACTION_VIEW` playback, compatibility-cache reuse, and hardware playback of generated H.264 compatibility output.
 
-Verified flows:
-
-- app install and launch
-- library loading from `MediaStore`
-- folder mode
-- player open from in-app library tap
-- external `ACTION_VIEW` content-URI playback entry
-- no runtime crashes during the verified core flow
-- completed compatibility output is reused during replay
-- H.264 compatibility output is selected by the device hardware decoder
-
-An 8K Dolby Vision source can exceed the realtime software throughput of older devices. CineStream preserves original audio while preparing compatibility video and caches completed work; it does not claim realtime 8K decoding where the hardware and CPU cannot physically sustain it.
-
-Manual UX-oriented checks such as share target behavior, gesture feel, and destructive media actions should still be validated by hand before release.
+Gesture feel, lock/unlock ergonomics, pinch behavior, temporary-speed timing, track-sheet touch arbitration, and destructive media actions should be validated manually on physical hardware before publishing a release. Source-only or host-side verification must not be described as physical-device testing.
 
 ## Contributing
 
@@ -118,24 +130,13 @@ Contributions are welcome. For anything substantial:
 
 1. open an issue first for discussion
 2. keep changes scoped and reviewable
-3. run `.\gradlew.bat assembleDebug` before opening a pull request
-
-Repository templates are included for:
-
-- bug reports
-- feature requests
-- pull requests
+3. run `.\gradlew.bat testDebugUnitTest assembleRelease` before opening a pull request
 
 ## Releases
 
 Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
-Signed release artifacts are attached to each GitHub Release:
-
-- `CineStream-9.4-arm64-v8a.apk`
-- `CineStream-9.4-armeabi-v7a.apk`
-
-For most modern phones, use the `arm64-v8a` build.
+Signed release artifacts are attached to GitHub Releases when a release is explicitly published. No release is created merely by merging implementation work.
 
 ## Current version
 
@@ -144,20 +145,20 @@ For most modern phones, use the `arm64-v8a` build.
 
 ## Release packaging
 
-Release builds are now published as split APKs instead of one universal APK.
+Release builds use split APKs:
 
-- `arm64-v8a` release APK: optimized for most current Android phones
-- `armeabi-v7a` release APK: fallback for older 32-bit devices
+- `arm64-v8a` for current 64-bit Android hardware
+- `armeabi-v7a` for supported 32-bit Android hardware
 
-Version 9.4 keeps the reduced native package from 9.3 while improving 10-bit GLES rendering, runtime MediaCodec failure recovery, measured software-frame governance, and high-resolution compatibility handoff. The signed arm64 build remains approximately 14 MB.
+Version 9.4 keeps the reduced native package from 9.3 while improving 10-bit GLES rendering, runtime MediaCodec failure recovery, measured software-frame governance, high-resolution compatibility handoff, and the player interaction model described above.
 
 ## Roadmap ideas
 
 - add proper release screenshots for GitHub and Play listing
 - add instrumentation coverage for library and player entry flows
-- improve long-press action automation coverage
-- support richer subtitle and playback-speed controls
-- add a dedicated empty state and media permission onboarding copy
+- extend physical-device gesture regression coverage
+- support richer subtitle controls
+- add a dedicated empty state and media-permission onboarding copy
 
 ## Repository hygiene
 

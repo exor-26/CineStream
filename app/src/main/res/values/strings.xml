@@ -8,6 +8,8 @@
     <string name="crop_options">Crop Options</string>
     <string name="crop_mode_description">Crop mode: %1$s</string>
     <string name="seek_unavailable">Seek unavailable</string>
+    <string name="temporary_speed_feedback">2× &gt;&gt;&gt;</string>
+    <string name="temporary_speed_accessibility">Temporary playback speed, two times</string>
     <string name="original">Original</string>
     <string name="fill">Fill</string>
     <string name="fit">Fit</string>

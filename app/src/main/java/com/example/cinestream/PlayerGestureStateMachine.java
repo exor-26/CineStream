@@ -47,6 +47,10 @@ final class PlayerGestureStateMachine {
         return downX;
     }
 
+    float getDownY() {
+        return downY;
+    }
+
     Owner beginGesture(float x, float y, float width, float height) {
         downX = x;
         downY = y;
@@ -59,6 +63,14 @@ final class PlayerGestureStateMachine {
             owner = Owner.PENDING;
         }
         return owner;
+    }
+
+    boolean claimTemporarySpeed() {
+        if (locked || owner != Owner.PENDING) {
+            return false;
+        }
+        owner = Owner.TEMP_SPEED;
+        return true;
     }
 
     Owner onPointerCountChanged(int pointerCount) {
