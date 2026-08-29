@@ -6,6 +6,8 @@
     <string name="audio_track_description">Audio Track</string>
     <string name="process_audio">Process Audio</string>
     <string name="crop_options">Crop Options</string>
+    <string name="crop_mode_description">Crop mode: %1$s</string>
+    <string name="seek_unavailable">Seek unavailable</string>
     <string name="original">Original</string>
     <string name="fill">Fill</string>
     <string name="fit">Fit</string>

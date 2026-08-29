@@ -7,15 +7,14 @@
     android:fitsSystemWindows="false"
     android:background="@android:color/black">
 
-    <!-- UnifiedPlayerView owns surface-gesture arbitration. The activity remains responsible for
-         the existing playback, brightness, volume, crop, audio and compatibility behavior. -->
+    <!-- UnifiedPlayerView owns surface-gesture arbitration plus zoom/seek presentation. The
+         activity remains responsible for playback, brightness, volume, audio and compatibility. -->
     <com.example.cinestream.UnifiedPlayerView
         android:id="@+id/player_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         app:use_controller="true" />
 
-    <!-- Top bar — Java sets paddingTop = statusBarHeight -->
     <LinearLayout
         android:id="@+id/top_bar"
         android:layout_width="match_parent"
@@ -70,7 +69,7 @@
             android:contentDescription="@string/rotate_description"
             android:scaleType="fitCenter" />
 
-        <ImageButton
+        <com.example.cinestream.CropCycleButton
             android:id="@+id/btn_crop"
             android:layout_width="44dp"
             android:layout_height="44dp"
@@ -92,8 +91,6 @@
 
     </LinearLayout>
 
-    <!-- A small persistent lock affordance stays available even when Media3 controls auto-hide.
-         It disappears while locked; deliberate bottom-left swipe is then the only app unlock path. -->
     <com.example.cinestream.ScreenLockButton
         android:id="@+id/btn_screen_lock"
         android:layout_width="48dp"
@@ -148,7 +145,6 @@
             android:textSize="13sp" />
     </LinearLayout>
 
-    <!-- Volume overlay -->
     <LinearLayout
         android:id="@+id/overlay_container"
         android:layout_width="wrap_content"
@@ -197,7 +193,6 @@
 
     </LinearLayout>
 
-    <!-- Brightness overlay -->
     <LinearLayout
         android:id="@+id/brightness_overlay_container"
         android:layout_width="wrap_content"
