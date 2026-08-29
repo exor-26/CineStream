@@ -18,6 +18,7 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -416,6 +417,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             return insets;
         });
         topBar.requestApplyInsets();
+        installScreenLockSafeInsets();
 
         videoUri = resolveVideoUri();
         if (videoUri == null) {
@@ -2227,6 +2229,29 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void setupScreenLockButton() {
         screenLockButton.setOnClickListener(v -> playerView.lockPlayer(v));
+    }
+
+    private void installScreenLockSafeInsets() {
+        final int baseMargin = Math.round(8f * getResources().getDisplayMetrics().density);
+        ViewCompat.setOnApplyWindowInsetsListener(screenLockButton, (view, insets) -> {
+            androidx.core.graphics.Insets safeInsets = insets.getInsets(
+                    WindowInsetsCompat.Type.displayCutout()
+                            | WindowInsetsCompat.Type.systemBars()
+            );
+            boolean rtl = view.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
+            int safeStart = rtl ? safeInsets.right : safeInsets.left;
+            ViewGroup.LayoutParams rawParams = view.getLayoutParams();
+            if (rawParams instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) rawParams;
+                int requiredMargin = baseMargin + safeStart;
+                if (params.getMarginStart() != requiredMargin) {
+                    params.setMarginStart(requiredMargin);
+                    view.setLayoutParams(params);
+                }
+            }
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(screenLockButton);
     }
 
     @SuppressLint("ClickableViewAccessibility")

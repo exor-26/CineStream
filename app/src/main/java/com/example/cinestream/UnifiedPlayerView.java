@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
@@ -29,7 +30,7 @@ import java.util.Objects;
 @UnstableApi
 public final class UnifiedPlayerView extends PlayerView {
 
-    private static final long FEEDBACK_VISIBLE_MS = 650L;
+    private static final long FEEDBACK_VISIBLE_MS = 900L;
     private static final long UNLOCK_HINT_VISIBLE_MS = 1_800L;
     private static final long SEEK_PREVIEW_GRANULARITY_MS = 250L;
 
@@ -357,7 +358,12 @@ public final class UnifiedPlayerView extends PlayerView {
         player.setPlaybackSpeed(2f);
         temporarySpeedActive = true;
         hideController();
-        showFeedback(getResources().getString(R.string.temporary_speed_feedback), false);
+        showFeedback(
+                R.drawable.ic_forward,
+                getResources().getString(R.string.temporary_speed_feedback),
+                getResources().getString(R.string.temporary_speed_hint),
+                false
+        );
         announceForAccessibility(
                 getResources().getString(R.string.temporary_speed_accessibility));
     }
@@ -409,7 +415,7 @@ public final class UnifiedPlayerView extends PlayerView {
         applyCropMode();
         applyVideoSurfaceScale();
         updateCropButtonPresentation(hapticSource);
-        showFeedback(cropModeLabel(), true);
+        showFeedback(cropModeIcon(), cropModeLabel(), cropModeDetail(), true);
     }
 
     private void applyCropMode() {
@@ -418,11 +424,11 @@ public final class UnifiedPlayerView extends PlayerView {
                 setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
                 break;
             case FILL:
-                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
                 break;
             case FIT:
             default:
-                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH);
+                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
                 break;
         }
     }
@@ -462,6 +468,30 @@ public final class UnifiedPlayerView extends PlayerView {
             case ORIGINAL:
             default:
                 return getResources().getString(R.string.original);
+        }
+    }
+
+    private int cropModeIcon() {
+        switch (cropMode) {
+            case FILL:
+                return R.drawable.ic_crop_fill;
+            case FIT:
+                return R.drawable.ic_crop_fit;
+            case ORIGINAL:
+            default:
+                return R.drawable.ic_crop;
+        }
+    }
+
+    private String cropModeDetail() {
+        switch (cropMode) {
+            case FILL:
+                return getResources().getString(R.string.crop_fill_detail);
+            case FIT:
+                return getResources().getString(R.string.crop_fit_detail);
+            case ORIGINAL:
+            default:
+                return getResources().getString(R.string.crop_original_detail);
         }
     }
 
@@ -511,14 +541,24 @@ public final class UnifiedPlayerView extends PlayerView {
             return;
         }
         lastZoomPercentage = percentage;
-        showFeedback(percentage + "%", false);
+        showFeedback(
+                R.drawable.ic_gesture_zoom,
+                percentage + "%",
+                getResources().getString(R.string.pinch_zoom),
+                false
+        );
     }
 
     private void updateSeekPreview(float horizontalDistancePx) {
         if (!seekPreviewActive) {
             LogicalTimelineSnapshot snapshot = captureLogicalTimeline();
             if (snapshot.durationMs <= 0L || snapshot.positionMs < 0L) {
-                showFeedback(getResources().getString(R.string.seek_unavailable), false);
+                showFeedback(
+                        R.drawable.ic_forward,
+                        getResources().getString(R.string.seek_unavailable),
+                        null,
+                        false
+                );
                 return;
             }
             seekPreviewActive = true;
@@ -543,10 +583,14 @@ public final class UnifiedPlayerView extends PlayerView {
         long deltaMs = seekTargetMs - seekStartPositionMs;
         String arrow = deltaMs >= 0L ? "→" : "←";
         String sign = deltaMs >= 0L ? "+" : "−";
-        String preview = arrow
-                + " " + sign + PlayerGestureMath.formatTimestamp(Math.abs(deltaMs))
-                + " • " + PlayerGestureMath.formatTimestamp(seekTargetMs);
-        showFeedback(preview, false);
+        String delta = arrow + " " + sign
+                + PlayerGestureMath.formatTimestamp(Math.abs(deltaMs));
+        showFeedback(
+                deltaMs >= 0L ? R.drawable.ic_forward : R.drawable.ic_rewind,
+                PlayerGestureMath.formatTimestamp(seekTargetMs),
+                delta,
+                false
+        );
     }
 
     private void commitSeekPreview() {
@@ -705,7 +749,12 @@ public final class UnifiedPlayerView extends PlayerView {
 
         View feedbackSource = hapticSource != null ? hapticSource : this;
         feedbackSource.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-        showFeedback(getResources().getString(R.string.screen_locked), true);
+        showFeedback(
+                R.drawable.ic_screen_lock,
+                getResources().getString(R.string.screen_locked),
+                getResources().getString(R.string.unlock_hint_short),
+                true
+        );
         showUnlockHint();
         announceForAccessibility(
                 getResources().getString(R.string.screen_locked_accessibility));
@@ -771,7 +820,12 @@ public final class UnifiedPlayerView extends PlayerView {
             showController();
         }
         performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-        showFeedback(getResources().getString(R.string.screen_unlocked), true);
+        showFeedback(
+                R.drawable.ic_screen_lock,
+                getResources().getString(R.string.screen_unlocked),
+                null,
+                true
+        );
         announceForAccessibility(getResources().getString(R.string.screen_unlocked));
     }
 
@@ -856,35 +910,57 @@ public final class UnifiedPlayerView extends PlayerView {
                 || ValueAnimator.areAnimatorsEnabled();
     }
 
-    private void showFeedback(String text, boolean autoHide) {
+    private void showFeedback(
+            int iconResource,
+            String title,
+            @Nullable String detail,
+            boolean autoHide
+    ) {
         hideTransientAdjustmentOverlays();
-        TextView feedback = getRootView().findViewById(R.id.gesture_feedback);
+        View feedback = getRootView().findViewById(R.id.gesture_feedback);
         if (feedback == null) {
             return;
         }
+        ImageView icon = feedback.findViewById(R.id.gesture_feedback_icon);
+        TextView titleView = feedback.findViewById(R.id.gesture_feedback_title);
+        TextView detailView = feedback.findViewById(R.id.gesture_feedback_detail);
+        if (icon != null) {
+            icon.setImageResource(iconResource);
+        }
+        if (titleView != null) {
+            titleView.setText(title);
+        }
+        if (detailView != null) {
+            boolean hasDetail = detail != null && !detail.isEmpty();
+            detailView.setText(hasDetail ? detail : "");
+            detailView.setVisibility(hasDetail ? View.VISIBLE : View.GONE);
+        }
         feedback.removeCallbacks(hideFeedbackRunnable);
         feedback.animate().cancel();
-        feedback.setText(text);
         if (!animationsEnabled()) {
             feedback.setAlpha(1f);
             feedback.setScaleX(1f);
             feedback.setScaleY(1f);
+            feedback.setTranslationY(0f);
             feedback.setVisibility(View.VISIBLE);
         } else if (feedback.getVisibility() != View.VISIBLE) {
             feedback.setVisibility(View.VISIBLE);
             feedback.setAlpha(0f);
-            feedback.setScaleX(0.92f);
-            feedback.setScaleY(0.92f);
+            feedback.setScaleX(0.90f);
+            feedback.setScaleY(0.90f);
+            feedback.setTranslationY(8f * getResources().getDisplayMetrics().density);
             feedback.animate()
                     .alpha(1f)
                     .scaleX(1f)
                     .scaleY(1f)
-                    .setDuration(120L)
+                    .translationY(0f)
+                    .setDuration(150L)
                     .start();
         } else {
             feedback.setAlpha(1f);
             feedback.setScaleX(1f);
             feedback.setScaleY(1f);
+            feedback.setTranslationY(0f);
         }
         if (autoHide) {
             feedback.postDelayed(hideFeedbackRunnable, FEEDBACK_VISIBLE_MS);
@@ -892,7 +968,7 @@ public final class UnifiedPlayerView extends PlayerView {
     }
 
     private void scheduleFeedbackHide() {
-        TextView feedback = getRootView().findViewById(R.id.gesture_feedback);
+        View feedback = getRootView().findViewById(R.id.gesture_feedback);
         if (feedback == null) {
             return;
         }
@@ -901,7 +977,7 @@ public final class UnifiedPlayerView extends PlayerView {
     }
 
     private void animateFeedbackOut() {
-        TextView feedback = getRootView().findViewById(R.id.gesture_feedback);
+        View feedback = getRootView().findViewById(R.id.gesture_feedback);
         if (feedback == null) {
             return;
         }
@@ -915,6 +991,7 @@ public final class UnifiedPlayerView extends PlayerView {
                 .alpha(0f)
                 .scaleX(0.96f)
                 .scaleY(0.96f)
+                .translationY(-4f * getResources().getDisplayMetrics().density)
                 .setDuration(140L)
                 .withEndAction(() -> feedback.setVisibility(View.GONE))
                 .start();
@@ -975,7 +1052,7 @@ public final class UnifiedPlayerView extends PlayerView {
     }
 
     private void cancelGestureFeedback() {
-        TextView feedback = getRootView().findViewById(R.id.gesture_feedback);
+        View feedback = getRootView().findViewById(R.id.gesture_feedback);
         if (feedback == null) {
             return;
         }
@@ -984,6 +1061,7 @@ public final class UnifiedPlayerView extends PlayerView {
         feedback.setAlpha(0f);
         feedback.setScaleX(1f);
         feedback.setScaleY(1f);
+        feedback.setTranslationY(0f);
         feedback.setVisibility(View.GONE);
     }
 

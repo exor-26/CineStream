@@ -5,9 +5,10 @@ import java.util.Locale;
 final class PlayerGestureMath {
 
     static final float MIN_ZOOM = 0.85f;
-    static final float FALLBACK_MAX_ZOOM = 2.75f;
+    static final float FALLBACK_MAX_ZOOM = 3.5f;
     private static final float MIN_MAX_ZOOM = 1.25f;
-    private static final float MAX_RENDER_MULTIPLIER = 2.75f;
+    private static final float MAX_ZOOM = 6f;
+    private static final float FULL_SCREEN_HEADROOM = 1.20f;
     private static final long MIN_SEEK_RANGE_MS = 15_000L;
     private static final long MAX_SEEK_RANGE_MS = 180_000L;
     private static final float SEEK_DURATION_FRACTION = 0.12f;
@@ -40,14 +41,14 @@ final class PlayerGestureMath {
                 || containerWidth <= 0 || containerHeight <= 0) {
             return FALLBACK_MAX_ZOOM;
         }
-        float widthCoverage = surfaceWidth / (float) containerWidth;
-        float heightCoverage = surfaceHeight / (float) containerHeight;
-        float coverage = Math.max(widthCoverage, heightCoverage);
-        if (coverage <= 0f || !Float.isFinite(coverage)) {
+        float widthToCover = containerWidth / (float) surfaceWidth;
+        float heightToCover = containerHeight / (float) surfaceHeight;
+        float fullScreenZoom = Math.max(widthToCover, heightToCover);
+        if (fullScreenZoom <= 0f || !Float.isFinite(fullScreenZoom)) {
             return FALLBACK_MAX_ZOOM;
         }
-        float bounded = MAX_RENDER_MULTIPLIER / coverage;
-        return Math.max(MIN_MAX_ZOOM, Math.min(FALLBACK_MAX_ZOOM, bounded));
+        float usefulMaximum = fullScreenZoom * FULL_SCREEN_HEADROOM;
+        return Math.max(MIN_MAX_ZOOM, Math.min(MAX_ZOOM, usefulMaximum));
     }
 
     static int zoomPercentage(float zoom) {

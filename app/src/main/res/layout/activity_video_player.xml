@@ -93,32 +93,62 @@
 
     <ImageButton
         android:id="@+id/btn_screen_lock"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
         android:layout_gravity="start|center_vertical"
         android:layout_marginStart="8dp"
-        android:alpha="0.82"
-        android:background="@drawable/overlay_background"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
         android:contentDescription="@string/screen_lock_description"
-        android:padding="12dp"
+        android:padding="10dp"
         android:scaleType="fitCenter"
         android:src="@drawable/ic_screen_lock" />
 
-    <TextView
+    <LinearLayout
         android:id="@+id/gesture_feedback"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:background="@drawable/overlay_background"
-        android:fontFamily="sans-serif-medium"
+        android:minWidth="164dp"
+        android:background="@drawable/gesture_feedback_background"
+        android:elevation="8dp"
+        android:gravity="center"
         android:importantForAccessibility="no"
-        android:paddingStart="18dp"
-        android:paddingTop="11dp"
-        android:paddingEnd="18dp"
-        android:paddingBottom="11dp"
-        android:textColor="#F5F7FB"
-        android:textSize="15sp"
-        android:visibility="gone" />
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="16dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/gesture_feedback_icon"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:importantForAccessibility="no"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/gesture_feedback_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"
+            android:textColor="#F7F9FF"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/gesture_feedback_detail"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:fontFamily="sans-serif"
+            android:gravity="center"
+            android:maxWidth="220dp"
+            android:textColor="#BFC7D8"
+            android:textSize="12sp" />
+
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/unlock_hint_container"

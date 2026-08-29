@@ -7,9 +7,14 @@
     <string name="process_audio">Process Audio</string>
     <string name="crop_options">Crop Options</string>
     <string name="crop_mode_description">Crop mode: %1$s</string>
+    <string name="crop_original_detail">Preserve the source frame</string>
+    <string name="crop_fill_detail">Stretch to fill the screen</string>
+    <string name="crop_fit_detail">Cover the screen, keep aspect</string>
     <string name="seek_unavailable">Seek unavailable</string>
     <string name="temporary_speed_feedback">2× &gt;&gt;&gt;</string>
+    <string name="temporary_speed_hint">Release to resume normal speed</string>
     <string name="temporary_speed_accessibility">Temporary playback speed, two times</string>
+    <string name="pinch_zoom">Pinch zoom</string>
     <string name="original">Original</string>
     <string name="fill">Fill</string>
     <string name="fit">Fit</string>
@@ -18,6 +23,7 @@
     <string name="screen_locked">Locked</string>
     <string name="screen_unlocked">Unlocked</string>
     <string name="unlock_hint">Swipe right from bottom left to unlock  →</string>
+    <string name="unlock_hint_short">Swipe from bottom left →</string>
     <string name="screen_locked_accessibility">Screen locked. Swipe right from the bottom left to unlock.</string>
     <string name="about_project">About Project</string>
 </resources>

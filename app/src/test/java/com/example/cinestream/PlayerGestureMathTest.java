@@ -23,11 +23,20 @@ public class PlayerGestureMathTest {
     }
 
     @Test
-    public void zoomCeilingRespondsToSurfaceCoverage() {
-        float normal = PlayerGestureMath.maxZoom(1000, 600, 1000, 600);
-        float alreadyOversized = PlayerGestureMath.maxZoom(2000, 1200, 1000, 600);
-        assertTrue(normal > alreadyOversized);
-        assertTrue(alreadyOversized >= 1.25f);
+    public void zoomCeilingCanCoverPortraitDisplay() {
+        float maximum = PlayerGestureMath.maxZoom(1080, 608, 1080, 2400);
+        float zoomNeededToCover = 2400f / 608f;
+        assertTrue(maximum >= zoomNeededToCover);
+        assertTrue(maximum <= 6f);
+    }
+
+    @Test
+    public void zoomCeilingStaysPracticalForAlreadyLargeSurface() {
+        assertEquals(
+                1.25f,
+                PlayerGestureMath.maxZoom(2000, 1200, 1000, 600),
+                0.0001f
+        );
     }
 
     @Test
