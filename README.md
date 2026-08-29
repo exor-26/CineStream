@@ -75,17 +75,17 @@ Older Android media apps often depend on raw file paths and broad storage permis
 
 ## Project structure
 
-- `app/src/main/java/com/example/cinestream/MainActivity.java`  
+- `app/src/main/java/com/example/cinestream/MainActivity.java`
   Main library screen, permission flow, MediaStore loading, folder grouping, rename/delete orchestration
-- `app/src/main/java/com/example/cinestream/VideoAdapter.java`  
+- `app/src/main/java/com/example/cinestream/VideoAdapter.java`
   Video row binding, thumbnail loading, metadata display, share/info actions
-- `app/src/main/java/com/example/cinestream/VideoPlayerActivity.java`  
+- `app/src/main/java/com/example/cinestream/VideoPlayerActivity.java`
   Full-screen player, playback resume, brightness/volume execution, rotation, tracks, and compatibility lifecycle
-- `app/src/main/java/com/example/cinestream/UnifiedPlayerView.java`  
+- `app/src/main/java/com/example/cinestream/UnifiedPlayerView.java`
   Player-surface gesture arbitration, screen lock, pinch zoom, logical seeking, temporary speed, crop cycling, and transient gesture feedback
-- `app/src/main/java/com/example/cinestream/PlaybackPrefs.java`  
+- `app/src/main/java/com/example/cinestream/PlaybackPrefs.java`
   Lightweight playback progress persistence
-- `app/src/main/java/com/example/cinestream/VideoFile.java`  
+- `app/src/main/java/com/example/cinestream/VideoFile.java`
   Media model built around stable IDs and `content://` URIs
 
 ## Storage model
