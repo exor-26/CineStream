@@ -61,6 +61,15 @@ public class CineFfmpegLibraryTest {
     public void realtimeDecoderThreadsAreBoundedBySourceComplexityAndCpu() {
         assertEquals(2, CineFfmpegVideoRenderer.chooseThreadCount(7680, 4320, 12));
         assertEquals(4, CineFfmpegVideoRenderer.chooseThreadCount(3840, 2160, 12));
+        assertEquals(4, CineFfmpegVideoRenderer.chooseThreadCount(
+                3840, 2160, 8, 1024L * 1024L * 1024L
+        ));
+        assertEquals(4, CineFfmpegVideoRenderer.chooseThreadCount(
+                3840, 2160, 8, 512L * 1024L * 1024L
+        ));
+        assertEquals(2, CineFfmpegVideoRenderer.chooseThreadCount(
+                3840, 2160, 8, 256L * 1024L * 1024L
+        ));
         assertEquals(8, CineFfmpegVideoRenderer.chooseThreadCount(1920, 1080, 12));
         assertEquals(3, CineFfmpegVideoRenderer.chooseThreadCount(1920, 1080, 3));
         assertEquals(2, CineFfmpegVideoRenderer.chooseThreadCount(-1, -1, 12));

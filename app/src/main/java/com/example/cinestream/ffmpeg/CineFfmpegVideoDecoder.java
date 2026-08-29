@@ -101,7 +101,7 @@ final class CineFfmpegVideoDecoder implements
             int threads,
             Format format,
             boolean transformerInput,
-            boolean discardNonReferenceFrames
+            boolean governedFastDecode
     ) throws CineFfmpegDecoderException {
         if (!CineFfmpegLibrary.isAvailable()) {
             throw new CineFfmpegDecoderException("CineStream FFmpeg native library is unavailable.");
@@ -127,7 +127,7 @@ final class CineFfmpegVideoDecoder implements
                 format.rotationDegrees,
                 format.width,
                 format.height,
-                discardNonReferenceFrames
+                governedFastDecode
         );
         if (nativeContext == 0L) {
             throw new CineFfmpegDecoderException("Unable to initialize FFmpeg decoder " + codecName);
@@ -690,7 +690,7 @@ final class CineFfmpegVideoDecoder implements
             int rotationDegrees,
             int width,
             int height,
-            boolean discardNonReferenceFrames
+            boolean governedFastDecode
     );
 
     private static native int nativeDecodePacket(

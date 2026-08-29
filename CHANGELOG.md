@@ -2,6 +2,23 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.4 - 2026-08-29
+
+### Changed
+
+- High-resolution CineFFmpeg recovery now uses a bounded, memory-aware decoder thread pool and decoder-safe fast mode without deleting presentation frames
+- Software playback starts after a real decoded frame is available, then continues under Media3 timestamp, A/V-sync, and frame-drop control
+- Unsustainable direct playback releases its source decoder before H.264 compatibility generation so playback and export do not compete for the same CPU and native memory
+- Partial progressive outputs stay outside the playable timeline until they can be represented as one coherent Media3 period; completed full-file compatibility cache remains the stable fallback
+
+### Fixed
+
+- Black 10-bit HDR output caused by incompatible GLES sampler types sharing texture unit zero
+- Runtime MediaCodec lifecycle failures that were not previously classified as recoverable video failures
+- False 100% software drop reports caused by `DecoderVideoRenderer` not forwarding rendered-frame counts
+- Multi-second frame gaps caused by discarding non-reference HEVC frames in governed software mode
+- Repeated black handoffs and severe memory/CPU contention when direct 4K software playback and compatibility generation ran concurrently
+
 ## 9.3 - 2026-08-24
 
 ### Added

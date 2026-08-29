@@ -1,6 +1,8 @@
 package com.example.cinestream;
 
+import android.app.ActivityManager;
 import android.content.Context;
+import android.media.MediaCodec;
 import android.os.Handler;
 
 import androidx.media3.common.Format;
@@ -72,7 +74,19 @@ public final class PlaybackEnginePolicy {
             Context context,
             DecoderMode decoderMode
     ) {
-        return new CineStreamRenderersFactory(context, decoderMode);
+        return createRenderersFactory(context, decoderMode, false);
+    }
+
+    public static DefaultRenderersFactory createRenderersFactory(
+            Context context,
+            DecoderMode decoderMode,
+            boolean governedFastVideoDecode
+    ) {
+        return new CineStreamRenderersFactory(
+                context,
+                decoderMode,
+                governedFastVideoDecode
+        );
     }
 
     public static boolean shouldRetryWithSoftwareAudio(
@@ -123,6 +137,15 @@ public final class PlaybackEnginePolicy {
         return "video/av01".equals(mime)
                 || "video/x-vnd.on2.vp9".equals(mime)
                 || CineFfmpegLibrary.isDeclaredVideoMimeType(mime);
+    }
+
+    static boolean shouldUseGovernedFastVideoDecode(Format format) {
+        if (format == null || format.width <= 0 || format.height <= 0) {
+            return false;
+        }
+        long pixels = (long) format.width * format.height;
+        return pixels > 1920L * 1080L
+                || (format.frameRate > 0f && format.frameRate > 60f);
     }
 
     static boolean shouldAllowCompatibilityRecovery(
@@ -182,6 +205,47 @@ public final class PlaybackEnginePolicy {
         return isDecoderFailure(error) && isVideoRendererFailure(error);
     }
 
+    /**
+     * Recognizes a MediaCodec lifecycle failure that Media3 reports as an unexpected runtime check
+     * instead of a renderer/decoder error. This occurs after a codec is reclaimed or released
+     * during fallback and a subsequent surface/flush operation races with that release.
+     */
+    static boolean isPlatformVideoRuntimeFailure(
+            PlaybackException error,
+            Format selectedVideoFormat
+    ) {
+        return error != null
+                && error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK
+                && selectedVideoFormat != null
+                && selectedVideoFormat.sampleMimeType != null
+                && selectedVideoFormat.sampleMimeType.startsWith("video/")
+                && hasMediaCodecLifecycleFailure(error);
+    }
+
+    static boolean hasMediaCodecLifecycleFailure(Throwable error) {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 16; depth++) {
+            if (current instanceof MediaCodec.CodecException) {
+                return true;
+            }
+            if (current instanceof IllegalStateException) {
+                String message = current.getMessage();
+                if (message != null) {
+                    String normalized = message.toLowerCase(java.util.Locale.US);
+                    if (normalized.contains("setsurface")
+                            || normalized.contains("setoutputsurface")
+                            || normalized.contains("flush() is valid only")
+                            || (normalized.contains("released state")
+                            && normalized.contains("executing"))) {
+                        return true;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     static Format getFailedVideoFormat(PlaybackException error) {
         if (!isVideoRendererFailure(error)) {
             return null;
@@ -226,10 +290,16 @@ public final class PlaybackEnginePolicy {
         private static final int SOFTWARE_VIDEO_DROPPED_FRAMES_NOTIFY_THRESHOLD = 50;
 
         private final DecoderMode decoderMode;
+        private final boolean governedFastVideoDecode;
 
-        CineStreamRenderersFactory(Context context, DecoderMode decoderMode) {
+        CineStreamRenderersFactory(
+                Context context,
+                DecoderMode decoderMode,
+                boolean governedFastVideoDecode
+        ) {
             super(context);
             this.decoderMode = decoderMode != null ? decoderMode : DecoderMode.HARDWARE_FIRST;
+            this.governedFastVideoDecode = governedFastVideoDecode;
             setExtensionRendererMode(
                     this.decoderMode.preferSoftwareAudio
                             ? EXTENSION_RENDERER_MODE_PREFER
@@ -268,6 +338,8 @@ public final class PlaybackEnginePolicy {
                     eventListener,
                     SOFTWARE_VIDEO_DROPPED_FRAMES_NOTIFY_THRESHOLD,
                     decoderMode.preferSoftwareVideo,
+                    governedFastVideoDecode,
+                    availableMemoryBytes(context),
                     context.getResources().getDisplayMetrics().widthPixels,
                     context.getResources().getDisplayMetrics().heightPixels
             );
@@ -276,6 +348,18 @@ public final class PlaybackEnginePolicy {
             } else {
                 out.add(ffmpegRenderer);
             }
+        }
+
+        private static long availableMemoryBytes(Context context) {
+            ActivityManager manager = (ActivityManager) context.getSystemService(
+                    Context.ACTIVITY_SERVICE
+            );
+            if (manager == null) {
+                return 0L;
+            }
+            ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
+            manager.getMemoryInfo(memoryInfo);
+            return Math.max(0L, memoryInfo.availMem);
         }
     }
 }

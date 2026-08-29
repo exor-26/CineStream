@@ -16,7 +16,7 @@ CineStream is a local Android video player focused on fast on-device browsing, b
 - Audio track selection, crop modes, and orientation lock controls
 - Hardware-first playback with direct CineFFmpeg software recovery
 - Runtime-governed H.264 compatibility playback for unsupported or unsustainable video
-- Reusable progressive compatibility segments for faster replay and seeking
+- Validated compatibility caching for stable, faster replay
 - Original audio, subtitle, metadata, and track-selection sources remain separate from compatibility video
 
 ## Video compatibility flow
@@ -27,11 +27,13 @@ Playback decisions use runtime codec results, memory pressure, CPU load, thermal
 MediaCodec hardware playback
 → direct CineFFmpeg recovery
 → governed software playback
-→ progressive H.264 compatibility cache
-→ full-file H.264 fallback
+→ completed H.264 compatibility cache
+→ full-file H.264 recovery
 ```
 
-Completed compatibility files are reused on replay. Only finalized, structurally validated H.264 MP4 segments enter the playable timeline; incomplete `.part` files are never exposed to the player.
+Completed compatibility files are reused on replay. Partial progressive outputs remain isolated from the playable timeline until Media3 can represent them as one coherent period; incomplete `.part` files are never exposed to the player.
+
+For high-resolution sources that cannot remain near realtime, CineStream measures actual rendered and dropped frames, stops the unsustainable source decoder, and gives compatibility generation the available CPU and memory. This avoids running two expensive decoders concurrently and preserves Media3's original audio, subtitle, metadata, and synchronization sources for the final playback session.
 
 ## Why this project matters
 
@@ -93,7 +95,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Tested status
 
-The current release flow has been exercised on physical Vivo, Realme, and older Android devices. The exact 7680×4320 60 fps Dolby Vision Profile 5 test file was also used for compatibility and replay validation.
+The release flow has been exercised on physical Vivo, Realme, and older Android devices. The exact 7680×4320 60 fps Dolby Vision Profile 5 test file and a 3840×1920 HEVC Main 10 HDR source were used for compatibility and replay investigation.
 
 Verified flows:
 
@@ -103,7 +105,7 @@ Verified flows:
 - player open from in-app library tap
 - external `ACTION_VIEW` content-URI playback entry
 - no runtime crashes during the verified core flow
-- completed progressive segments are reused during replay
+- completed compatibility output is reused during replay
 - H.264 compatibility output is selected by the device hardware decoder
 
 An 8K Dolby Vision source can exceed the realtime software throughput of older devices. CineStream preserves original audio while preparing compatibility video and caches completed work; it does not claim realtime 8K decoding where the hardware and CPU cannot physically sustain it.
@@ -130,15 +132,15 @@ Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 Signed release artifacts are attached to each GitHub Release:
 
-- `CineStream-9.3-arm64-v8a.apk`
-- `CineStream-9.3-armeabi-v7a.apk`
+- `CineStream-9.4-arm64-v8a.apk`
+- `CineStream-9.4-armeabi-v7a.apk`
 
 For most modern phones, use the `arm64-v8a` build.
 
 ## Current version
 
-- `versionName`: `9.3`
-- `versionCode`: `88`
+- `versionName`: `9.4`
+- `versionCode`: `89`
 
 ## Release packaging
 
@@ -147,7 +149,7 @@ Release builds are now published as split APKs instead of one universal APK.
 - `arm64-v8a` release APK: optimized for most current Android phones
 - `armeabi-v7a` release APK: fallback for older 32-bit devices
 
-Version 9.3 removes a redundant native metadata-only FFmpeg/OpenSSL bundle while retaining CineFFmpeg video, FFmpeg audio, dav1d, VP9, Media3, and compatibility playback. The signed arm64 build is approximately 14 MB.
+Version 9.4 keeps the reduced native package from 9.3 while improving 10-bit GLES rendering, runtime MediaCodec failure recovery, measured software-frame governance, and high-resolution compatibility handoff. The signed arm64 build remains approximately 14 MB.
 
 ## Roadmap ideas
 

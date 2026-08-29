@@ -1,5 +1,6 @@
 package com.example.cinestream;
 
+import androidx.media3.common.Format;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 
@@ -127,6 +128,30 @@ public class PlaybackEnginePolicyTest {
         ));
         assertFalse(PlaybackEnginePolicy.shouldRecoverFromMissingFirstFrame(
                 true, false, true, true, Player.STATE_READY, 20_000L, 10_000L
+        ));
+    }
+
+    @Test
+    public void releasedMediaCodecSurfaceFailureIsRecoverableButOrdinaryStateErrorIsNot() {
+        Throwable wrapped = new RuntimeException(
+                "player runtime check",
+                new IllegalStateException(
+                        "setSurface() is valid only at Executing states; currently at Released state"
+                )
+        );
+        assertTrue(PlaybackEnginePolicy.hasMediaCodecLifecycleFailure(wrapped));
+        assertFalse(PlaybackEnginePolicy.hasMediaCodecLifecycleFailure(
+                new IllegalStateException("unrelated application state")
+        ));
+    }
+
+    @Test
+    public void governedFastDecodeUsesSourceComplexityNotDeviceIdentity() {
+        assertTrue(PlaybackEnginePolicy.shouldUseGovernedFastVideoDecode(
+                new Format.Builder().setWidth(3840).setHeight(1920).build()
+        ));
+        assertFalse(PlaybackEnginePolicy.shouldUseGovernedFastVideoDecode(
+                new Format.Builder().setWidth(1920).setHeight(1080).setFrameRate(24f).build()
         ));
     }
 }

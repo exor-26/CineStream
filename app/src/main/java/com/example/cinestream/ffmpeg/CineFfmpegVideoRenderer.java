@@ -17,6 +17,8 @@ import androidx.media3.exoplayer.RendererCapabilities;
 import androidx.media3.exoplayer.video.DecoderVideoRenderer;
 import androidx.media3.exoplayer.video.VideoRendererEventListener;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * Media3 video renderer backed by CineStream's minimal FFmpeg build.
  *
@@ -31,8 +33,15 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
     private static final int DEFAULT_INPUT_BUFFER_SIZE = 2 * 1024 * 1024;
 
     private final boolean explicitSoftwareRecovery;
+    private final boolean governedFastDecode;
+    private final long availableMemoryBytes;
     private final int displayWidth;
     private final int displayHeight;
+    @Nullable
+    private final Handler eventHandler;
+    @Nullable
+    private final VideoRendererEventListener eventListener;
+    private final AtomicInteger pendingRenderedFrameEvents = new AtomicInteger();
 
     @Nullable
     private CineFfmpegVideoDecoder decoder;
@@ -43,13 +52,19 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
             @Nullable VideoRendererEventListener eventListener,
             int maxDroppedFramesToNotify,
             boolean explicitSoftwareRecovery,
+            boolean governedFastDecode,
+            long availableMemoryBytes,
             int displayWidth,
             int displayHeight
     ) {
         super(allowedJoiningTimeMs, eventHandler, eventListener, maxDroppedFramesToNotify);
         this.explicitSoftwareRecovery = explicitSoftwareRecovery;
+        this.governedFastDecode = governedFastDecode;
+        this.availableMemoryBytes = Math.max(0L, availableMemoryBytes);
         this.displayWidth = Math.max(1, displayWidth);
         this.displayHeight = Math.max(1, displayHeight);
+        this.eventHandler = eventHandler;
+        this.eventListener = eventListener;
     }
 
     @Override
@@ -95,14 +110,17 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
         int threads = chooseThreadCount(
                 format.width,
                 format.height,
-                Runtime.getRuntime().availableProcessors()
+                Runtime.getRuntime().availableProcessors(),
+                availableMemoryBytes
         );
         CineFfmpegVideoDecoder newDecoder = new CineFfmpegVideoDecoder(
                 NUM_INPUT_BUFFERS,
                 NUM_OUTPUT_BUFFERS,
                 initialInputBufferSize,
                 threads,
-                format
+                format,
+                false,
+                governedFastDecode
         );
         decoder = newDecoder;
         return newDecoder;
@@ -132,8 +150,33 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
                     outputSize[0],
                     outputSize[1]
             );
+            reportRenderedFrame();
         } finally {
             outputBuffer.release();
+        }
+    }
+
+    private void reportRenderedFrame() {
+        Handler handler = eventHandler;
+        VideoRendererEventListener listener = eventListener;
+        if (handler == null || listener == null) {
+            return;
+        }
+        if (pendingRenderedFrameEvents.incrementAndGet() == 1) {
+            if (!handler.post(this::dispatchRenderedFrames)) {
+                pendingRenderedFrameEvents.set(0);
+            }
+        }
+    }
+
+    private void dispatchRenderedFrames() {
+        int frameCount = pendingRenderedFrameEvents.getAndSet(0);
+        VideoRendererEventListener listener = eventListener;
+        if (listener != null && frameCount > 0) {
+            // DecoderVideoRenderer updates DecoderCounters but, unlike MediaCodecVideoRenderer,
+            // does not dispatch processing-offset events. Emit the rendered count through the
+            // standard listener so the governor compares real rendered and dropped frames.
+            listener.onVideoFrameProcessingOffset(0L, frameCount);
         }
     }
 
@@ -150,6 +193,15 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
     }
 
     static int chooseThreadCount(int width, int height, int availableProcessors) {
+        return chooseThreadCount(width, height, availableProcessors, 0L);
+    }
+
+    static int chooseThreadCount(
+            int width,
+            int height,
+            int availableProcessors,
+            long availableMemoryBytes
+    ) {
         int processorLimit = Math.max(1, availableProcessors);
         int dimensionLimit;
         if (width <= 0 || height <= 0) {
@@ -159,7 +211,11 @@ public final class CineFfmpegVideoRenderer extends DecoderVideoRenderer {
             if (pixels > 4096L * 2160L) {
                 dimensionLimit = 2;
             } else if (pixels > 1920L * 1080L) {
-                dimensionLimit = 4;
+                // HEVC frame threads retain large reference surfaces. More than four threads at
+                // 4K caused hundreds of MB of extra native allocation and swap pressure in live
+                // tests, so memory pressure lowers the generic pool instead of expanding it.
+                dimensionLimit = availableMemoryBytes > 0L
+                        && availableMemoryBytes < 384L * 1024L * 1024L ? 2 : 4;
             } else {
                 dimensionLimit = 8;
             }

@@ -664,6 +664,17 @@ ProgramState createProgram(const char* fragmentSource) {
     state.rotation = glGetUniformLocation(state.id, "uRotation");
     state.doviActive = glGetUniformLocation(state.id, "uDoviActive");
     state.doviDataTexture = glGetUniformLocation(state.id, "uDoviDataTexture");
+    // A sampler's texture unit participates in program validation even when the branch that
+    // samples it is disabled. Leaving the float Dolby Vision sampler at its default unit 0 while
+    // the 10-bit Y sampler is an unsigned-integer sampler on unit 0 makes glDrawArrays fail with
+    // GL_INVALID_OPERATION on conforming GLES drivers. Keep sampler types on distinct units for
+    // every 10-bit frame, including ordinary HDR10 frames without Dolby Vision metadata.
+    if (state.doviDataTexture >= 0) {
+        glUniform1i(state.doviDataTexture, 3);
+    }
+    if (state.doviActive >= 0) {
+        glUniform1i(state.doviActive, 0);
+    }
     return state;
 }
 
@@ -1081,8 +1092,17 @@ bool renderFrame(
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    if (glGetError() != GL_NO_ERROR) {
-        LOGE("OpenGL error while drawing FFmpeg frame");
+    GLenum drawError = glGetError();
+    if (drawError != GL_NO_ERROR) {
+        LOGE(
+                "OpenGL error 0x%x while drawing FFmpeg frame (bitDepth=%d, frame=%dx%d, surface=%dx%d)",
+                drawError,
+                bitDepth,
+                renderableFrame->width,
+                renderableFrame->height,
+                surfaceWidth,
+                surfaceHeight
+        );
         av_frame_free(&convertedFrame);
         return false;
     }
@@ -1255,7 +1275,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
         jint rotationDegrees,
         jint width,
         jint height,
-        jboolean discardNonReferenceFrames
+        jboolean governedFastDecode
 ) {
     std::string name = jstringToString(env, codecName);
     const AVCodec* codec = avcodec_find_decoder_by_name(name.c_str());
@@ -1274,8 +1294,14 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
     context->rotationDegrees = rotationDegrees;
     context->codec->thread_count = std::max(1, static_cast<int>(threads));
     context->codec->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-    if (discardNonReferenceFrames == JNI_TRUE) {
-        context->codec->skip_frame = AVDISCARD_NONREF;
+    if (governedFastDecode == JNI_TRUE) {
+        // Keep the complete presentation timeline. Skipping non-reference HEVC pictures can
+        // create multi-second visible gaps in streams with sparse reference frames. The governed
+        // path instead enables decoder-safe speedups and omits the expensive in-loop filter; the
+        // result is subsequently downscaled to the display, which masks most filter loss without
+        // deleting pictures or changing their timestamps.
+        context->codec->flags2 |= AV_CODEC_FLAG2_FAST;
+        context->codec->skip_loop_filter = AVDISCARD_ALL;
     }
     context->codec->pkt_timebase = AVRational{1, 1000000};
     if (width > 0) context->codec->width = width;
@@ -1334,10 +1360,10 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
     }
 
     LOGI(
-            "Initialized FFmpeg %s decoder, threads=%d, discardNonRef=%d",
+            "Initialized FFmpeg %s decoder, threads=%d, governedFast=%d",
             name.c_str(),
             context->codec->thread_count,
-            discardNonReferenceFrames == JNI_TRUE ? 1 : 0
+            governedFastDecode == JNI_TRUE ? 1 : 0
     );
     return reinterpret_cast<jlong>(context);
 }
