@@ -139,7 +139,7 @@ Contributions are welcome. For anything substantial:
 
 Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
-Download the signed production APK for your device from [CineStream 9.5](https://github.com/exor-26/CineStream/releases/tag/v9.5):
+Download the signed production APK for your device from [CineStream 9.5.1](https://github.com/exor-26/CineStream/releases/tag/v9.5.1):
 
 - `arm64-v8a` for almost all current 64-bit Android devices
 - `armeabi-v7a` for supported older 32-bit Android devices
@@ -148,8 +148,8 @@ The APKs are split by ABI to keep the installed download compact. CineStream doe
 
 ## Current version
 
-- `versionName`: `9.5`
-- `versionCode`: `90`
+- `versionName`: `9.5.1`
+- `versionCode`: `91`
 
 ## Release packaging
 
@@ -158,7 +158,7 @@ Release builds use split APKs:
 - `arm64-v8a` for current 64-bit Android hardware
 - `armeabi-v7a` for supported 32-bit Android hardware
 
-Version 9.5 keeps the reduced native playback package while completing the essential library and player experience: consistent frosted surfaces, theme-aware track selection, persistent sorting, multi-video actions, safer scoped-storage deletion, corrected full-surface zoom, and clearer system-navigation feedback. The hardware-first, OEM-independent recovery architecture from 9.4 remains unchanged.
+Version 9.5.1 keeps the complete 9.5 experience while restoring last-played-first library ordering beneath every sort mode and removing the expensive live blur pass that could hitch when opening the audio/subtitle sheet. The hardware-first, OEM-independent recovery architecture from 9.4 remains unchanged.
 
 ## Roadmap ideas
 

@@ -341,9 +341,11 @@ public final class GlassUi {
             sheet.setBackground(new ColorDrawable(Color.TRANSPARENT));
         }
         if (dialog.getWindow() != null) {
-            applyFrostedWindow(context, dialog.getWindow());
+            // A system blur-behind pass competes with the live video surface and causes a visible
+            // hitch on track-sheet entry. The sheet keeps its translucent glass material while
+            // the player underneath continues rendering without an extra full-window blur pass.
+            applyFrostedWindow(context, dialog.getWindow(), false);
         }
-        dialog.show();
 
         if (sheet != null) {
             BottomSheetBehavior<FrameLayout> behavior = BottomSheetBehavior.from(sheet);
@@ -355,10 +357,11 @@ public final class GlassUi {
             installBottomSheetScrollArbitration(context, leftRecyclerView, behavior);
             installBottomSheetScrollArbitration(context, rightRecyclerView, behavior);
 
-            // Start fully expanded in every orientation so the track lists, not a partially
-            // collapsed parent sheet, receive the first vertical gesture.
-            sheet.post(() -> behavior.setState(BottomSheetBehavior.STATE_EXPANDED));
+            // Set the initial state before the window is shown. Posting this transition after
+            // show briefly presents a collapsed sheet and then animates it a second time.
+            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
         }
+        dialog.show();
     }
 
     private static void installBottomSheetScrollArbitration(
@@ -470,15 +473,28 @@ public final class GlassUi {
     }
 
     private static void applyFrostedWindow(Context context, Window window) {
+        applyFrostedWindow(context, window, true);
+    }
+
+    private static void applyFrostedWindow(
+            Context context,
+            Window window,
+            boolean enableSystemBackgroundBlur
+    ) {
         window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         WindowManager.LayoutParams params = window.getAttributes();
         params.dimAmount = 0.28f;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && enableSystemBackgroundBlur) {
             window.setBackgroundBlurRadius(dp(context, 32));
             window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
             params.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
             params.setBlurBehindRadius(dp(context, 18));
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            window.setBackgroundBlurRadius(0);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
+            params.flags &= ~WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+            params.setBlurBehindRadius(0);
         }
         window.setAttributes(params);
     }

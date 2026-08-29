@@ -433,6 +433,10 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 return result != 0 ? result : nameComparator.compare(left, right);
             });
         }
+
+        // Resume history is a library invariant, not a sort mode. Keep the most recently played
+        // video first and apply the user's selected ordering to every item beneath it.
+        pinLastPlayed(videos);
     }
 
     private void setupSelectionActions() {

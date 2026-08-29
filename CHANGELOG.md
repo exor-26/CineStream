@@ -2,6 +2,18 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.5.1 - 2026-08-29
+
+### Changed
+
+- The audio/subtitle sheet keeps its translucent glass material without requesting an expensive live system blur over the actively rendering video
+- The track sheet starts expanded immediately instead of visibly transitioning through a second opening state
+
+### Fixed
+
+- The most recently played video is again pinned first while the selected Name, Date, or Duration sort applies to every item beneath it
+- Opening the audio/subtitle sheet no longer introduces the new blur-related playback hitch
+
 ## 9.5 - 2026-08-29
 
 ### Added
