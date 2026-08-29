@@ -58,6 +58,7 @@ public final class UnifiedPlayerView extends PlayerView {
     private boolean temporarySpeedActive;
     private Player temporarySpeedPlayer;
     private PlaybackParameters previousPlaybackParameters;
+    @Nullable private Runnable playerUnlockedListener;
 
     private final Runnable hideFeedbackRunnable = this::animateFeedbackOut;
     private final Runnable hideUnlockHintRunnable = this::animateUnlockHintOut;
@@ -153,6 +154,10 @@ public final class UnifiedPlayerView extends PlayerView {
             player.addListener(internalPlayerListener);
             handleLogicalMediaIdentity(player.getCurrentMediaItem());
         }
+    }
+
+    public void setOnPlayerUnlockedListener(@Nullable Runnable listener) {
+        playerUnlockedListener = listener;
     }
 
     @Override
@@ -337,6 +342,7 @@ public final class UnifiedPlayerView extends PlayerView {
         }
         Player player = getPlayer();
         if (player == null
+                || !player.isPlaying()
                 || !player.getAvailableCommands().contains(Player.COMMAND_SET_SPEED_AND_PITCH)
                 || !gestureStateMachine.claimTemporarySpeed()) {
             cancelTemporarySpeedCandidate();
@@ -759,7 +765,11 @@ public final class UnifiedPlayerView extends PlayerView {
         cancelUnlockHint();
         setUseController(true);
         setPlayerControlsEnabled(true);
-        showController();
+        if (playerUnlockedListener != null) {
+            playerUnlockedListener.run();
+        } else {
+            showController();
+        }
         performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
         showFeedback(getResources().getString(R.string.screen_unlocked), true);
         announceForAccessibility(getResources().getString(R.string.screen_unlocked));
@@ -802,8 +812,8 @@ public final class UnifiedPlayerView extends PlayerView {
         View root = getRootView();
         View topBar = root.findViewById(R.id.top_bar);
         setEnabledRecursively(topBar, enabled);
-        if (!enabled && topBar != null) {
-            topBar.setVisibility(View.GONE);
+        if (topBar != null) {
+            topBar.setVisibility(enabled ? View.VISIBLE : View.GONE);
         }
 
         View lockButton = root.findViewById(R.id.btn_screen_lock);
@@ -1013,10 +1023,6 @@ public final class UnifiedPlayerView extends PlayerView {
 
     @Override
     protected void onDetachedFromWindow() {
-        Player player = getPlayer();
-        if (player != null) {
-            player.removeListener(internalPlayerListener);
-        }
         resetLockWithoutFeedback();
         super.onDetachedFromWindow();
     }

@@ -5,6 +5,8 @@ import android.app.Dialog;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
@@ -188,13 +190,25 @@ public final class GlassUi {
 
         titleView.setText(ABOUT_DIALOG_TITLE);
         productView.setText("CineStream Dev");
-        versionView.setText("Version " + BuildConfig.VERSION_NAME + " • MIT License");
+        versionView.setText("Version " + appVersionName(context) + " • MIT License");
         repositoryView.setText(CINESTREAM_REPOSITORY_URL);
         repositoryView.setContentDescription("Open CineStream GitHub repository");
         repositoryView.setOnClickListener(v ->
                 openExternalUri(context, CINESTREAM_REPOSITORY_URL));
         closeButton.setOnClickListener(v -> dialog.dismiss());
         dialog.show();
+    }
+
+    private static String appVersionName(Context context) {
+        try {
+            PackageInfo packageInfo = context.getPackageManager().getPackageInfo(
+                    context.getPackageName(),
+                    0
+            );
+            return packageInfo.versionName != null ? packageInfo.versionName : "—";
+        } catch (PackageManager.NameNotFoundException ignored) {
+            return "—";
+        }
     }
 
     private static void openExternalUri(Context context, String uriText) {

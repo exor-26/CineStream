@@ -50,7 +50,6 @@ import androidx.media3.exoplayer.source.FilteringMediaSource;
 import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.exoplayer.source.MergingMediaSource;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
-import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
 import com.example.cinestream.ffmpeg.CineFfmpegLibrary;
@@ -77,10 +76,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private ExoPlayer exoPlayer;
     private DefaultTrackSelector trackSelector;
-    private PlayerView playerView;
+    private UnifiedPlayerView playerView;
     private ImageButton rotateButton;
     private ImageButton cropButton;
     private ImageButton audioTrackButton;
+    private ImageButton screenLockButton;
 
     private LinearLayout brightnessOverlay;
     private ProgressBar brightnessProgressBar;
@@ -348,6 +348,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         rotateButton = findViewById(R.id.btn_rotate);
         cropButton = findViewById(R.id.btn_crop);
         audioTrackButton = findViewById(R.id.audio_track);
+        screenLockButton = findViewById(R.id.btn_screen_lock);
 
         brightnessOverlay = findViewById(R.id.brightness_overlay_container);
         brightnessProgressBar = findViewById(R.id.brightness_progress);
@@ -438,6 +439,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                     }
                 }
         );
+        playerView.setOnPlayerUnlockedListener(this::showControls);
 
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         maxVolume = audioManager != null
@@ -455,6 +457,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         setupRotationButton();
         setupAudioTrackButton();
         setupCropButton();
+        setupScreenLockButton();
         setupGestureDetection();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -2217,52 +2220,13 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void setupCropButton() {
         cropButton.setOnClickListener(v -> {
-            java.util.ArrayList<GlassUi.ActionItem> actions = new java.util.ArrayList<>();
-            actions.add(new GlassUi.ActionItem(0, "Original", "Preserve the source framing"));
-            actions.add(new GlassUi.ActionItem(1, "Fill", "Stretch to fill the player bounds"));
-            actions.add(new GlassUi.ActionItem(2, "Fit", "Zoom to cover while keeping aspect"));
-
-            GlassUi.showActionSheet(this, "Crop mode", actions, item -> {
-                switch (item.id) {
-                    case 0:
-                        applyCropping(CropType.ORIGINAL);
-                        GlassUi.showToast(this, "Crop mode: Original");
-                        break;
-                    case 1:
-                        applyCropping(CropType.FILL);
-                        GlassUi.showToast(this, "Crop mode: Fill");
-                        break;
-                    case 2:
-                        applyCropping(CropType.FIT);
-                        GlassUi.showToast(this, "Crop mode: Fit");
-                        break;
-                    default:
-                        break;
-                }
-            });
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            playerView.cycleCropMode(v);
         });
     }
 
-    private enum CropType {
-        ORIGINAL, FILL, FIT
-    }
-
-    @OptIn(markerClass = UnstableApi.class)
-    private void applyCropping(CropType cropType) {
-        switch (cropType) {
-            case ORIGINAL:
-                playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
-                cropButton.setImageResource(R.drawable.ic_crop);
-                break;
-            case FILL:
-                playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
-                cropButton.setImageResource(R.drawable.ic_crop_fill);
-                break;
-            case FIT:
-                playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
-                cropButton.setImageResource(R.drawable.ic_crop_fit);
-                break;
-        }
+    private void setupScreenLockButton() {
+        screenLockButton.setOnClickListener(v -> playerView.lockPlayer(v));
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -2458,6 +2422,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         rotateButton.setVisibility(state);
         audioTrackButton.setVisibility(state);
         cropButton.setVisibility(state);
+        screenLockButton.setVisibility(state);
         if (btnBack != null) btnBack.setVisibility(state);
         if (tvVideoName != null) tvVideoName.setVisibility(state);
         View topBar = findViewById(R.id.top_bar);

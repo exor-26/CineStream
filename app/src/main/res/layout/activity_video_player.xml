@@ -69,7 +69,7 @@
             android:contentDescription="@string/rotate_description"
             android:scaleType="fitCenter" />
 
-        <com.example.cinestream.CropCycleButton
+        <ImageButton
             android:id="@+id/btn_crop"
             android:layout_width="44dp"
             android:layout_height="44dp"
@@ -91,7 +91,7 @@
 
     </LinearLayout>
 
-    <com.example.cinestream.ScreenLockButton
+    <ImageButton
         android:id="@+id/btn_screen_lock"
         android:layout_width="48dp"
         android:layout_height="48dp"
