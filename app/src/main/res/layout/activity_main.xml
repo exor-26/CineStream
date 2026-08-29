@@ -9,25 +9,31 @@
     tools:context=".MainActivity">
 
     <!-- RecyclerView — full screen, clipToPadding false so items can go edge-to-edge -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerView"
+    <eightbitlab.com.blurview.BlurTarget
+        android:id="@+id/main_blur_target"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:clipToPadding="false"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <com.google.android.material.card.MaterialCardView
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/recyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false" />
+    </eightbitlab.com.blurview.BlurTarget>
+
+    <eightbitlab.com.blurview.BlurView
         android:id="@+id/titleCard"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="12dp"
-        app:cardElevation="8dp"
-        app:cardCornerRadius="28dp"
-        app:strokeWidth="0dp"
-        app:cardBackgroundColor="#CC1C1B1F"
+        android:background="@drawable/glass_blur_surface_bg"
+        android:clipToOutline="true"
+        android:elevation="8dp"
+        app:blurOverlayColor="@color/main_glass_overlay_strong"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
@@ -42,19 +48,31 @@
             android:paddingTop="8dp"
             android:paddingBottom="8dp" />
 
-    </com.google.android.material.card.MaterialCardView>
+    </eightbitlab.com.blurview.BlurView>
 
-    <com.google.android.material.card.MaterialCardView
+    <ImageButton
+        android:id="@+id/sortBtn"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/sort_videos"
+        android:padding="12dp"
+        android:src="@drawable/ic_sort_videos"
+        android:tint="@color/glass_text_accent"
+        app:layout_constraintBottom_toBottomOf="@id/aboutBtn"
+        app:layout_constraintEnd_toStartOf="@id/aboutBtn"
+        app:layout_constraintTop_toTopOf="@id/aboutBtn" />
+
+    <eightbitlab.com.blurview.BlurView
         android:id="@+id/aboutBtn"
         android:layout_width="55dp"
         android:layout_height="55dp"
         android:layout_marginEnd="16dp"
         android:layout_marginTop="6dp"
-        app:cardElevation="8dp"
-        app:cardCornerRadius="24dp"
-        app:strokeWidth="1dp"
-        app:strokeColor="#1AFFFFFF"
-        app:cardBackgroundColor="#CC1C1B1F"
+        android:background="@drawable/glass_blur_surface_bg"
+        android:clipToOutline="true"
+        android:elevation="8dp"
+        app:blurOverlayColor="@color/main_glass_overlay_strong"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -67,20 +85,18 @@
             android:contentDescription="@string/about_project"
             android:scaleType="fitCenter" />
 
-    </com.google.android.material.card.MaterialCardView>
+    </eightbitlab.com.blurview.BlurView>
 
     <!-- Floating search bar — position set in code below titleCard -->
-    <com.google.android.material.card.MaterialCardView
+    <eightbitlab.com.blurview.BlurView
         android:id="@+id/searchCard"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        app:cardElevation="0dp"
-        app:cardCornerRadius="28dp"
-        app:strokeWidth="1dp"
-        app:strokeColor="#1AFFFFFF"
-        app:cardBackgroundColor="#28FFFFFF"
+        android:background="@drawable/glass_blur_surface_bg"
+        android:clipToOutline="true"
+        app:blurOverlayColor="@color/main_glass_overlay_soft"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -108,7 +124,8 @@
                 android:hint="Search videos..."
                 android:textSize="13sp"
                 android:textColor="?android:textColorPrimary"
-                android:textColorHint="?android:textColorSecondary"                android:paddingStart="10dp"
+                android:textColorHint="?android:textColorSecondary"
+                android:paddingStart="10dp"
                 android:paddingEnd="8dp"
                 android:inputType="text"
                 android:imeOptions="actionSearch"
@@ -127,20 +144,19 @@
 
         </LinearLayout>
 
-    </com.google.android.material.card.MaterialCardView>
+    </eightbitlab.com.blurview.BlurView>
 
     <!-- Floating toggle button — bottom right -->
-    <com.google.android.material.card.MaterialCardView
+    <eightbitlab.com.blurview.BlurView
         android:id="@+id/toggleViewBtn"
         android:layout_width="56dp"
         android:layout_height="56dp"
         android:layout_marginEnd="20dp"
         android:layout_marginBottom="24dp"
-        app:cardCornerRadius="28dp"
-        app:cardElevation="8dp"
-        app:cardBackgroundColor="#CC1C1B1F"
-        app:strokeWidth="1dp"
-        app:strokeColor="#1AFFFFFF"
+        android:background="@drawable/glass_blur_surface_bg"
+        android:clipToOutline="true"
+        android:elevation="8dp"
+        app:blurOverlayColor="@color/main_glass_overlay_strong"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -152,6 +168,147 @@
             android:src="@drawable/folder"
             android:scaleType="fitCenter" />
 
-    </com.google.android.material.card.MaterialCardView>
+    </eightbitlab.com.blurview.BlurView>
+
+    <eightbitlab.com.blurview.BlurView
+        android:id="@+id/selectionActionBar"
+        android:layout_width="wrap_content"
+        android:layout_height="64dp"
+        android:layout_marginBottom="24dp"
+        android:background="@drawable/glass_blur_surface_bg"
+        android:clipToOutline="true"
+        android:elevation="14dp"
+        android:visibility="gone"
+        app:blurOverlayColor="@color/main_glass_overlay_strong"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
+
+            <ImageButton
+                android:id="@+id/selectionRename"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/selection_rename"
+                android:padding="13dp"
+                android:src="@drawable/ic_selection_rename"
+                android:tint="@color/selection_action_icon" />
+
+            <ImageButton
+                android:id="@+id/selectionShare"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/selection_share"
+                android:padding="13dp"
+                android:src="@drawable/ic_selection_share"
+                android:tint="@color/glass_text_accent" />
+
+            <ImageButton
+                android:id="@+id/selectionDetails"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/selection_details"
+                android:padding="13dp"
+                android:src="@drawable/ic_selection_details"
+                android:tint="@color/selection_action_icon" />
+
+            <ImageButton
+                android:id="@+id/selectionDelete"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/selection_delete"
+                android:padding="13dp"
+                android:src="@drawable/ic_selection_delete"
+                android:tint="@color/selection_delete_icon" />
+
+        </LinearLayout>
+
+    </eightbitlab.com.blurview.BlurView>
+
+    <View
+        android:id="@+id/sortDismissLayer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@android:color/transparent"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <eightbitlab.com.blurview.BlurView
+        android:id="@+id/sortPopup"
+        android:layout_width="176dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/glass_blur_surface_bg"
+        android:clipToOutline="true"
+        android:elevation="16dp"
+        android:visibility="gone"
+        app:blurOverlayColor="@color/main_glass_overlay_strong"
+        app:layout_constraintEnd_toEndOf="@id/sortBtn"
+        app:layout_constraintTop_toBottomOf="@id/sortBtn">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="8dp">
+
+            <TextView
+                android:id="@+id/sortByName"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="@drawable/sort_option_bg"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center_vertical"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="@string/sort_by_name"
+                android:textColor="@color/glass_text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/sortByDate"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="@drawable/sort_option_bg"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center_vertical"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="@string/sort_by_date"
+                android:textColor="@color/glass_text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/sortByDuration"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="@drawable/sort_option_bg"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center_vertical"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="@string/sort_by_duration"
+                android:textColor="@color/glass_text_primary"
+                android:textSize="14sp" />
+
+        </LinearLayout>
+
+    </eightbitlab.com.blurview.BlurView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

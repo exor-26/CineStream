@@ -58,6 +58,7 @@ public final class VideoListDiffer {
                     VideoFile newItem = newSnapshot.get(newItemPosition);
                     return oldItem.getSizeBytes() == newItem.getSizeBytes()
                             && oldItem.getDateModified() == newItem.getDateModified()
+                            && oldItem.getDurationMs() == newItem.getDurationMs()
                             && Objects.equals(oldItem.getName(), newItem.getName())
                             && Objects.equals(oldItem.getContentUri(), newItem.getContentUri())
                             && Objects.equals(oldItem.getFolderName(), newItem.getFolderName())

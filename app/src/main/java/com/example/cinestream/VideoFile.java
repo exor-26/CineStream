@@ -8,6 +8,7 @@ public class VideoFile {
     private final Uri contentUri;
     private final long sizeBytes;
     private final long dateModified;
+    private final long durationMs;
     private final String folderName;
     private final String folderKey;
     private final String playbackKey;
@@ -18,6 +19,7 @@ public class VideoFile {
             Uri contentUri,
             long sizeBytes,
             long dateModified,
+            long durationMs,
             String folderName,
             String folderKey,
             String playbackKey
@@ -27,6 +29,7 @@ public class VideoFile {
         this.contentUri = contentUri;
         this.sizeBytes = sizeBytes;
         this.dateModified = dateModified;
+        this.durationMs = durationMs;
         this.folderName = folderName;
         this.folderKey = folderKey;
         this.playbackKey = playbackKey;
@@ -50,6 +53,10 @@ public class VideoFile {
 
     public long getDateModified() {
         return dateModified;
+    }
+
+    public long getDurationMs() {
+        return durationMs;
     }
 
     public String getFolderName() {

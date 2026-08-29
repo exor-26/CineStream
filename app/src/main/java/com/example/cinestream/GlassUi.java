@@ -11,6 +11,7 @@ import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -22,10 +23,13 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -39,6 +43,7 @@ public final class GlassUi {
     private static final String ABOUT_DIALOG_TITLE = "About CineStream";
     private static final String CINESTREAM_REPOSITORY_URL =
             "https://github.com/exor-26/CineStream";
+    private static final String CINESTREAM_DEVELOPER_NAME = "Aditya Singh";
 
     public interface ConfirmCallback {
         void onConfirm();
@@ -56,11 +61,17 @@ public final class GlassUi {
         public final int id;
         public final String title;
         public final String subtitle;
+        public final boolean selected;
 
         public ActionItem(int id, String title, String subtitle) {
+            this(id, title, subtitle, false);
+        }
+
+        public ActionItem(int id, String title, String subtitle, boolean selected) {
             this.id = id;
             this.title = title;
             this.subtitle = subtitle;
+            this.selected = selected;
         }
     }
 
@@ -185,18 +196,28 @@ public final class GlassUi {
         TextView titleView = dialog.findViewById(R.id.dialog_title);
         TextView productView = dialog.findViewById(R.id.about_product_name);
         TextView versionView = dialog.findViewById(R.id.about_version);
-        TextView repositoryView = dialog.findViewById(R.id.about_repository);
-        TextView closeButton = dialog.findViewById(R.id.dialog_close);
+        TextView developerView = dialog.findViewById(R.id.about_developer_name);
+        View repositoryView = dialog.findViewById(R.id.about_repository);
+        ScrollView scrollView = dialog.findViewById(R.id.about_scroll);
+        View closeButton = dialog.findViewById(R.id.dialog_close);
 
         titleView.setText(ABOUT_DIALOG_TITLE);
-        productView.setText("CineStream Dev");
-        versionView.setText("Version " + appVersionName(context) + " • MIT License");
-        repositoryView.setText(CINESTREAM_REPOSITORY_URL);
-        repositoryView.setContentDescription("Open CineStream GitHub repository");
+        productView.setText("CineStream");
+        versionView.setText("Version " + appVersionName(context));
+        developerView.setText(CINESTREAM_DEVELOPER_NAME);
+        repositoryView.setContentDescription("View CineStream source code on GitHub");
         repositoryView.setOnClickListener(v ->
                 openExternalUri(context, CINESTREAM_REPOSITORY_URL));
         closeButton.setOnClickListener(v -> dialog.dismiss());
+        scrollView.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         dialog.show();
+        sizeAboutDialog(context, dialog);
+        scrollView.postDelayed(() -> {
+            scrollView.fullScroll(View.FOCUS_UP);
+            scrollView.scrollTo(0, 0);
+            scrollView.requestFocus();
+            scrollView.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        }, 120L);
     }
 
     private static String appVersionName(Context context) {
@@ -250,6 +271,9 @@ public final class GlassUi {
         View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
         if (bottomSheet != null) {
             bottomSheet.setBackground(new ColorDrawable(Color.TRANSPARENT));
+        }
+        if (dialog.getWindow() != null) {
+            applyFrostedWindow(context, dialog.getWindow());
         }
         dialog.show();
 
@@ -315,6 +339,9 @@ public final class GlassUi {
         FrameLayout sheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
         if (sheet != null) {
             sheet.setBackground(new ColorDrawable(Color.TRANSPARENT));
+        }
+        if (dialog.getWindow() != null) {
+            applyFrostedWindow(context, dialog.getWindow());
         }
         dialog.show();
 
@@ -417,7 +444,7 @@ public final class GlassUi {
 
         Window window = dialog.getWindow();
         if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            applyFrostedWindow(context, window);
             WindowManager.LayoutParams params = new WindowManager.LayoutParams();
             params.copyFrom(window.getAttributes());
             params.width = (int) (context.getResources().getDisplayMetrics().widthPixels * 0.92f);
@@ -425,6 +452,35 @@ public final class GlassUi {
             window.setAttributes(params);
         }
         return dialog;
+    }
+
+    private static void sizeAboutDialog(Context context, Dialog dialog) {
+        Window window = dialog.getWindow();
+        if (window == null) {
+            return;
+        }
+        int displayWidth = context.getResources().getDisplayMetrics().widthPixels;
+        int displayHeight = context.getResources().getDisplayMetrics().heightPixels;
+        WindowManager.LayoutParams params = window.getAttributes();
+        params.width = Math.min(Math.round(displayWidth * 0.92f), dp(context, 640));
+        params.height = Math.round(displayHeight * (
+                context.getResources().getConfiguration().orientation
+                        == Configuration.ORIENTATION_LANDSCAPE ? 0.92f : 0.86f));
+        window.setAttributes(params);
+    }
+
+    private static void applyFrostedWindow(Context context, Window window) {
+        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        WindowManager.LayoutParams params = window.getAttributes();
+        params.dimAmount = 0.28f;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            window.setBackgroundBlurRadius(dp(context, 32));
+            window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
+            params.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+            params.setBlurBehindRadius(dp(context, 18));
+        }
+        window.setAttributes(params);
     }
 
     private static int dp(Context context, int value) {
@@ -453,6 +509,16 @@ public final class GlassUi {
         public void onBindViewHolder(@NonNull ActionViewHolder holder, int position) {
             ActionItem item = items.get(position);
             holder.titleView.setText(item.title);
+            holder.itemView.setActivated(item.selected);
+            holder.selectedView.setVisibility(item.selected ? View.VISIBLE : View.GONE);
+            holder.titleView.setTextColor(ContextCompat.getColor(
+                    holder.itemView.getContext(),
+                    item.selected ? R.color.glass_text_selected : R.color.glass_text_primary
+            ));
+            holder.subtitleView.setTextColor(ContextCompat.getColor(
+                    holder.itemView.getContext(),
+                    item.selected ? R.color.glass_text_accent : R.color.glass_text_secondary
+            ));
             if (TextUtils.isEmpty(item.subtitle)) {
                 holder.subtitleView.setVisibility(View.GONE);
             } else {
@@ -470,11 +536,13 @@ public final class GlassUi {
         static final class ActionViewHolder extends RecyclerView.ViewHolder {
             private final TextView titleView;
             private final TextView subtitleView;
+            private final ImageView selectedView;
 
             ActionViewHolder(@NonNull View itemView) {
                 super(itemView);
                 titleView = itemView.findViewById(R.id.action_title);
                 subtitleView = itemView.findViewById(R.id.action_subtitle);
+                selectedView = itemView.findViewById(R.id.action_selected);
             }
         }
     }

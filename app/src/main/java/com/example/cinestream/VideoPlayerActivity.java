@@ -342,6 +342,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_player);
+        installFullscreenExitHint();
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
@@ -1968,10 +1969,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 String title = AudioTrackFormatter.buildTitle(ordinal, format);
                 String subtitle = AudioTrackFormatter.buildTechnicalDetails(
                         format, audioGroups.get(i).isTrackSupported(j));
-                if (audioGroups.get(i).isTrackSelected(j)) {
-                    subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
-                }
-                actions.add(new GlassUi.ActionItem(i * 100 + j, title, subtitle));
+                boolean selected = audioGroups.get(i).isTrackSelected(j);
+                actions.add(new GlassUi.ActionItem(i * 100 + j, title, subtitle, selected));
             }
         }
         if (actions.isEmpty()) {
@@ -1986,7 +1985,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
         actions.add(new GlassUi.ActionItem(
                 ACTION_SUBTITLE_OFF,
                 "Off",
-                subtitleEnabled ? "Disable captions" : "Currently off"
+                subtitleEnabled ? "Disable captions" : "Currently off",
+                !subtitleEnabled
         ));
 
         int ordinal = 1;
@@ -1997,10 +1997,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 String title = SubtitleTrackFormatter.buildTitle(ordinal++, format);
                 String subtitle = SubtitleTrackFormatter.buildTechnicalDetails(
                         format, subtitleGroups.get(i).isTrackSupported(j));
-                if (subtitleGroups.get(i).isTrackSelected(j) && subtitleEnabled) {
-                    subtitle = "Selected" + (subtitle.isEmpty() ? "" : " • " + subtitle);
-                }
-                actions.add(new GlassUi.ActionItem(i * 100 + j, title, subtitle));
+                boolean selected = subtitleGroups.get(i).isTrackSelected(j) && subtitleEnabled;
+                actions.add(new GlassUi.ActionItem(i * 100 + j, title, subtitle, selected));
             }
         }
         return actions;
@@ -2476,6 +2474,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private final Handler uiHandler = new Handler(android.os.Looper.getMainLooper());
     private final Runnable hideControlsRunnable = this::hideControls;
+    private boolean immersiveBarsWereHidden;
+    private long lastFullscreenExitHintAtMs;
 
     private void resetHideControlsTimer() {
         uiHandler.removeCallbacks(hideControlsRunnable);
@@ -2491,5 +2491,24 @@ public class VideoPlayerActivity extends AppCompatActivity {
             controller.setSystemBarsBehavior(
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         }
+    }
+
+    private void installFullscreenExitHint() {
+        View decorView = getWindow().getDecorView();
+        ViewCompat.setOnApplyWindowInsetsListener(decorView, (view, insets) -> {
+            boolean systemBarsVisible = insets.isVisible(WindowInsetsCompat.Type.systemBars());
+            if (!systemBarsVisible) {
+                immersiveBarsWereHidden = true;
+            } else if (immersiveBarsWereHidden && hasWindowFocus()) {
+                immersiveBarsWereHidden = false;
+                long now = SystemClock.elapsedRealtime();
+                if (now - lastFullscreenExitHintAtMs >= 1_500L) {
+                    lastFullscreenExitHintAtMs = now;
+                    GlassUi.showToast(this, getString(R.string.fullscreen_exit_hint));
+                }
+            }
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(decorView);
     }
 }

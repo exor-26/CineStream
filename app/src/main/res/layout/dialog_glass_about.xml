@@ -1,99 +1,246 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_margin="12dp"
+    android:layout_height="match_parent"
     android:background="@drawable/glass_surface_bg"
-    android:elevation="10dp">
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="24dp">
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="22dp"
+        android:paddingTop="20dp"
+        android:paddingEnd="22dp"
+        android:paddingBottom="18dp">
 
-        <TextView
-            android:id="@+id/dialog_title"
+        <ImageView
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@null"
+            android:src="@mipmap/ic_launcher_round" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/dialog_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/glass_text_primary"
+                android:textSize="21sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/about_header_subtitle"
+                android:textColor="@color/glass_text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/glass_divider" />
+
+    <ScrollView
+        android:id="@+id/about_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:descendantFocusability="beforeDescendants"
+        android:fadeScrollbars="true"
+        android:fillViewport="true"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:saveEnabled="false"
+        android:overScrollMode="ifContentScrolls"
+        android:scrollbarStyle="outsideOverlay">
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="sans-serif-medium"
-            android:textColor="#FFFFFF"
-            android:textSize="20sp" />
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingTop="22dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="26dp">
 
-        <TextView
-            android:id="@+id/about_product_name"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:fontFamily="sans-serif-medium"
-            android:textColor="#F5F7FB"
-            android:textSize="18sp" />
+            <TextView
+                android:id="@+id/about_product_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/glass_text_primary"
+                android:textSize="24sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingExtra="2dp"
-            android:text="Local-first Android video player focused on reliable playback, clean browsing, and direct controls."
-            android:textColor="#B8C2D4"
-            android:textSize="14sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:lineSpacingExtra="3dp"
+                android:text="@string/about_overview"
+                android:textColor="@color/glass_text_secondary"
+                android:textSize="14sp" />
+
+            <TextView
+                style="@style/GlassAboutSectionLabel"
+                android:layout_marginTop="26dp"
+                android:text="@string/about_playback_title" />
+
+            <TextView
+                style="@style/GlassAboutBody"
+                android:text="@string/about_playback_body" />
+
+            <TextView
+                style="@style/GlassAboutSectionLabel"
+                android:layout_marginTop="24dp"
+                android:text="@string/about_experience_title" />
+
+            <TextView
+                style="@style/GlassAboutBody"
+                android:text="@string/about_experience_body" />
+
+            <TextView
+                style="@style/GlassAboutSectionLabel"
+                android:layout_marginTop="24dp"
+                android:text="@string/about_privacy_title" />
+
+            <TextView
+                style="@style/GlassAboutBody"
+                android:text="@string/about_privacy_body" />
+
+            <TextView
+                style="@style/GlassAboutSectionLabel"
+                android:layout_marginTop="24dp"
+                android:text="@string/about_open_source_title" />
+
+            <TextView
+                style="@style/GlassAboutBody"
+                android:text="@string/about_open_source_body" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="26dp"
+                android:background="@drawable/glass_surface_soft_bg"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.08"
+                    android:text="@string/about_developer_title"
+                    android:textAllCaps="true"
+                    android:textColor="@color/glass_text_accent"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/about_developer_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/glass_text_primary"
+                    android:textSize="19sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:text="@string/about_developer_role"
+                    android:textColor="@color/glass_text_secondary"
+                    android:textSize="13sp" />
+
+                <LinearLayout
+                    android:id="@+id/about_repository"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/glass_button_secondary"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="14dp">
+
+                    <ImageView
+                        android:layout_width="21dp"
+                        android:layout_height="21dp"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_external_link" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="11dp"
+                        android:layout_weight="1"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/about_github_action"
+                        android:textColor="@color/glass_text_primary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="↗"
+                        android:textColor="@color/glass_text_accent"
+                        android:textSize="19sp" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/glass_divider" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="22dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="14dp">
 
         <TextView
             android:id="@+id/about_version"
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:textColor="#9EABBF"
-            android:textSize="13sp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="20dp"
-            android:layout_marginBottom="18dp"
-            android:background="#1FFFFFFF" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="sans-serif-medium"
-            android:text="GitHub repository"
-            android:textColor="#88DCE4F2"
+            android:layout_weight="1"
+            android:textColor="@color/glass_text_tertiary"
             android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/about_repository"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:background="?android:attr/selectableItemBackground"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center_vertical"
-            android:minHeight="48dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"
-            android:textColor="#9AD7FF"
-            android:textIsSelectable="true"
-            android:textSize="14sp" />
 
         <TextView
             android:id="@+id/dialog_close"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="end"
-            android:layout_marginTop="18dp"
+            android:layout_height="44dp"
             android:background="@drawable/glass_button_primary"
+            android:clickable="true"
+            android:focusable="true"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
             android:minWidth="92dp"
             android:paddingStart="18dp"
-            android:paddingTop="12dp"
             android:paddingEnd="18dp"
-            android:paddingBottom="12dp"
-            android:text="Close"
+            android:text="@string/close"
             android:textColor="#FFFFFF"
             android:textSize="14sp" />
     </LinearLayout>
 
-</FrameLayout>
+</LinearLayout>

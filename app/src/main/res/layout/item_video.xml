@@ -108,6 +108,20 @@
             android:layout_weight="1"
             android:layout_marginStart="14dp">
 
+            <ImageView
+                android:id="@+id/video_selection_check"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:background="@drawable/selection_check_bg"
+                android:contentDescription="@null"
+                android:elevation="5dp"
+                android:importantForAccessibility="no"
+                android:padding="6dp"
+                android:src="@drawable/ic_check"
+                android:visibility="gone"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
             <!-- Video name -->
             <TextView
                 android:id="@+id/video_name"
@@ -121,7 +135,8 @@
                 android:fontFamily="sans-serif-medium"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toEndOf="parent" />
+                app:layout_constraintEnd_toStartOf="@id/video_selection_check"
+                app:layout_goneMarginEnd="0dp" />
 
             <!-- Size — bottom left -->
             <TextView

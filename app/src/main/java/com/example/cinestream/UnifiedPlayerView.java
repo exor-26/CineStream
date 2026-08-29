@@ -513,9 +513,9 @@ public final class UnifiedPlayerView extends PlayerView {
     }
 
     private float clampZoomToSurface(float requestedZoom) {
-        View surface = getVideoSurfaceView();
-        int surfaceWidth = surface != null ? surface.getWidth() : 0;
-        int surfaceHeight = surface != null ? surface.getHeight() : 0;
+        View scaleTarget = videoScaleTarget();
+        int surfaceWidth = scaleTarget != null ? scaleTarget.getWidth() : 0;
+        int surfaceHeight = scaleTarget != null ? scaleTarget.getHeight() : 0;
         return PlayerGestureMath.clampZoom(
                 requestedZoom,
                 surfaceWidth,
@@ -527,12 +527,26 @@ public final class UnifiedPlayerView extends PlayerView {
 
     private void applyVideoSurfaceScale() {
         View surface = getVideoSurfaceView();
-        if (surface == null) {
+        View scaleTarget = videoScaleTarget();
+        if (scaleTarget == null) {
             return;
         }
+        // Scaling SurfaceView/TextureView directly leaves it clipped by Media3's aspect-ratio
+        // frame. Transform the frame instead so zoom can expand in both axes up to the real
+        // PlayerView boundary, while controller and subtitle layers remain unaffected.
+        if (surface != null && surface != scaleTarget) {
+            surface.setScaleX(1f);
+            surface.setScaleY(1f);
+        }
         currentZoom = clampZoomToSurface(currentZoom);
-        surface.setScaleX(currentZoom);
-        surface.setScaleY(currentZoom);
+        scaleTarget.setScaleX(currentZoom);
+        scaleTarget.setScaleY(currentZoom);
+    }
+
+    @Nullable
+    private View videoScaleTarget() {
+        View contentFrame = findViewById(androidx.media3.ui.R.id.exo_content_frame);
+        return contentFrame != null ? contentFrame : getVideoSurfaceView();
     }
 
     private void presentZoomPercentage() {

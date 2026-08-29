@@ -7,10 +7,12 @@ CineStream is a local Android video player focused on fast on-device browsing, b
 - Browse all device videos from a single library screen
 - Switch between flat video list and folder-based navigation
 - Search videos by title from the main library view
+- Sort the library by name, newest date, or duration
 - Resume playback from the last watched position
 - Show thumbnail, duration, size, quality, and basic video info
-- Share videos through scoped-storage-safe `content://` URIs
-- Rename and delete media through modern `MediaStore` flows
+- Long-press to select one or many videos with a compact contextual action bar
+- Share multiple videos through scoped-storage-safe `content://` URIs
+- Rename, inspect, and batch-delete media through modern `MediaStore` flows
 - Support external `ACTION_VIEW` playback intents
 - Continuous two-finger pinch zoom with a live percentage preview
 - One-finger horizontal seek with signed delta and target-time preview
@@ -20,6 +22,7 @@ CineStream is a local Android video player focused on fast on-device browsing, b
 - Direct crop-mode cycling without a popup, preserving source aspect ratio
 - Reliable bidirectional audio/subtitle track-list scrolling inside the player sheet
 - Professional CineStream Dev information view with guarded repository opening
+- Theme-aware frosted-glass library, dialogs, sheets, and player feedback
 - Audio track selection, captions, orientation controls, loudness enhancement, and volume boost
 - Hardware-first playback with direct CineFFmpeg software recovery
 - Runtime-governed H.264 compatibility playback for unsupported or unsustainable video
@@ -136,12 +139,17 @@ Contributions are welcome. For anything substantial:
 
 Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
-Signed release artifacts are attached to GitHub Releases when a release is explicitly published. No release is created merely by merging implementation work.
+Download the signed production APK for your device from [CineStream 9.5](https://github.com/exor-26/CineStream/releases/tag/v9.5):
+
+- `arm64-v8a` for almost all current 64-bit Android devices
+- `armeabi-v7a` for supported older 32-bit Android devices
+
+The APKs are split by ABI to keep the installed download compact. CineStream does not ship a universal APK or include VLC/LibVLC.
 
 ## Current version
 
-- `versionName`: `9.4`
-- `versionCode`: `89`
+- `versionName`: `9.5`
+- `versionCode`: `90`
 
 ## Release packaging
 
@@ -150,7 +158,7 @@ Release builds use split APKs:
 - `arm64-v8a` for current 64-bit Android hardware
 - `armeabi-v7a` for supported 32-bit Android hardware
 
-Version 9.4 keeps the reduced native package from 9.3 while improving 10-bit GLES rendering, runtime MediaCodec failure recovery, measured software-frame governance, high-resolution compatibility handoff, and the player interaction model described above.
+Version 9.5 keeps the reduced native playback package while completing the essential library and player experience: consistent frosted surfaces, theme-aware track selection, persistent sorting, multi-video actions, safer scoped-storage deletion, corrected full-surface zoom, and clearer system-navigation feedback. The hardware-first, OEM-independent recovery architecture from 9.4 remains unchanged.
 
 ## Roadmap ideas
 

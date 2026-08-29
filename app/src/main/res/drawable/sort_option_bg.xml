@@ -1,23 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape>
             <solid android:color="@color/glass_row_pressed" />
-            <corners android:radius="18dp" />
+            <corners android:radius="14dp" />
         </shape>
     </item>
     <item android:state_activated="true">
         <shape>
             <solid android:color="@color/glass_row_selected" />
-            <corners android:radius="18dp" />
-            <stroke
-                android:width="1dp"
-                android:color="@color/glass_text_accent" />
+            <corners android:radius="14dp" />
         </shape>
     </item>
     <item>
         <shape>
-            <solid android:color="@color/glass_row_default" />
-            <corners android:radius="18dp" />
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="14dp" />
         </shape>
     </item>
 </selector>

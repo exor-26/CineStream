@@ -26,4 +26,27 @@
     <string name="unlock_hint_short">Swipe from bottom left →</string>
     <string name="screen_locked_accessibility">Screen locked. Swipe right from the bottom left to unlock.</string>
     <string name="about_project">About Project</string>
+    <string name="close">Close</string>
+    <string name="about_header_subtitle">Project documentation</string>
+    <string name="about_overview">A local-first Android video player designed for reliable playback, broad format recovery, and direct, responsive controls.</string>
+    <string name="about_playback_title">Playback architecture</string>
+    <string name="about_playback_body">CineStream keeps Android MediaCodec hardware decoding first for quality and efficiency. If the platform cannot render a track reliably, the player can move through its bundled CineFFmpeg software decoder and governed H.264 compatibility recovery. Runtime capability, memory, CPU, thermal state, display limits, and measured playback performance guide recovery—not OEM or device-name tables.</string>
+    <string name="about_experience_title">Media experience</string>
+    <string name="about_experience_body">• Local video library and playback history\n• Multiple audio tracks and subtitle selection\n• Original audio preserved during video compatibility recovery\n• Screen lock, pinch zoom, crop modes, gesture seeking, and temporary 2× speed\n• Hardware-first playback with measured software fallback</string>
+    <string name="about_privacy_title">Privacy</string>
+    <string name="about_privacy_body">CineStream works with media on your device and performs playback recovery on-device. No account is required, and the app does not request network access. The GitHub action below opens the project in your external browser.</string>
+    <string name="about_open_source_title">Open source</string>
+    <string name="about_open_source_body">CineStream is published under the MIT License. Its source, technical documentation, release history, and issue tracker are available in the project repository.</string>
+    <string name="about_developer_title">Developer</string>
+    <string name="about_developer_role">Creator and maintainer of CineStream</string>
+    <string name="about_github_action">View CineStream on GitHub</string>
+    <string name="fullscreen_exit_hint">Swipe again to leave full screen</string>
+    <string name="selection_rename">Rename selected video</string>
+    <string name="selection_share">Share selected videos</string>
+    <string name="selection_delete">Delete selected videos</string>
+    <string name="selection_details">View selected video details</string>
+    <string name="sort_videos">Sort videos</string>
+    <string name="sort_by_name">By name</string>
+    <string name="sort_by_date">By date</string>
+    <string name="sort_by_duration">By duration</string>
 </resources>

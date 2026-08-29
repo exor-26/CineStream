@@ -19,8 +19,8 @@ android {
         minSdk 24
         //noinspection EditedTargetSdkVersion
         targetSdk 35
-        versionCode 89
-        versionName "9.4"
+        versionCode 90
+        versionName "9.5"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -128,6 +128,8 @@ dependencies {
     implementation 'com.google.android.material:material:1.9.0'
     implementation libs.activity
     implementation 'androidx.palette:palette:1.0.0'
+    // Hardware-accelerated backdrop blur for floating in-activity glass surfaces.
+    implementation 'com.github.Dimezis:BlurView:version-3.2.0'
 
     // Test Libraries
     testImplementation 'junit:junit:4.13.2'

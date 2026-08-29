@@ -109,7 +109,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:minWidth="164dp"
-        android:background="@drawable/gesture_feedback_background"
+        android:background="@drawable/glass_surface_soft_bg"
         android:elevation="8dp"
         android:gravity="center"
         android:importantForAccessibility="no"
@@ -134,7 +134,7 @@
             android:layout_marginTop="8dp"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
-            android:textColor="#F7F9FF"
+            android:textColor="@color/glass_text_primary"
             android:textSize="18sp" />
 
         <TextView
@@ -145,7 +145,7 @@
             android:fontFamily="sans-serif"
             android:gravity="center"
             android:maxWidth="220dp"
-            android:textColor="#BFC7D8"
+            android:textColor="@color/glass_text_secondary"
             android:textSize="12sp" />
 
     </LinearLayout>
@@ -156,7 +156,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="58dp"
-        android:background="@drawable/overlay_background"
+        android:background="@drawable/glass_surface_soft_bg"
         android:gravity="center_vertical"
         android:importantForAccessibility="no"
         android:orientation="horizontal"
@@ -171,7 +171,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
             android:text="@string/unlock_hint"
-            android:textColor="#E7EDF8"
+            android:textColor="@color/glass_text_primary"
             android:textSize="13sp" />
     </LinearLayout>
 
@@ -183,7 +183,7 @@
         android:orientation="vertical"
         android:gravity="center_horizontal"
         android:padding="16dp"
-        android:background="@drawable/overlay_background"
+        android:background="@drawable/glass_surface_soft_bg"
         android:visibility="gone">
 
         <ImageView
@@ -231,7 +231,7 @@
         android:orientation="vertical"
         android:gravity="center_horizontal"
         android:padding="16dp"
-        android:background="@drawable/overlay_background"
+        android:background="@drawable/glass_surface_soft_bg"
         android:visibility="gone">
 
         <ImageView

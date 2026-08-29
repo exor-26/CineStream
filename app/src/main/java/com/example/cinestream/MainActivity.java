@@ -8,22 +8,23 @@ import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.IntentSender;
+import android.content.res.ColorStateList;
 import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.database.Cursor;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.provider.MediaStore;
 import android.view.View;
+import android.view.ViewOutlineProvider;
 import android.view.ViewTreeObserver;
 import android.view.Window;
-import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.TextView;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
@@ -41,11 +42,13 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.material.card.MaterialCardView;
+import eightbitlab.com.blurview.BlurTarget;
+import eightbitlab.com.blurview.BlurView;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,19 +59,35 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private enum ViewState { ALL_VIDEOS, FOLDER_LIST, FOLDER_CONTENTS }
     private enum PendingMediaAction { NONE, DELETE, RENAME }
+    private enum SortMode { NAME, DATE, DURATION }
 
     private ViewState currentState = ViewState.ALL_VIDEOS;
 
     private RecyclerView recyclerView;
-    private MaterialCardView titleCard;
-    private MaterialCardView aboutBtn;
+    private BlurTarget mainBlurTarget;
+    private BlurView titleCard;
+    private BlurView aboutBtn;
     private ImageView aboutIcon;
-    private MaterialCardView toggleViewBtn;
+    private BlurView toggleViewBtn;
     private ImageView toggleIcon;
 
-    private MaterialCardView searchCard;
+    private BlurView searchCard;
     private EditText searchInput;
     private ImageButton searchClear;
+    private ImageButton sortBtn;
+    private BlurView sortPopup;
+    private View sortDismissLayer;
+    private TextView sortByName;
+    private TextView sortByDate;
+    private TextView sortByDuration;
+    private SortMode sortMode = SortMode.DATE;
+    private BlurView selectionActionBar;
+    private ImageButton selectionRename;
+    private ImageButton selectionShare;
+    private ImageButton selectionDelete;
+    private ImageButton selectionDetails;
+    private VideoAdapter selectionAdapter;
+    private final List<VideoFile> selectedVideos = new ArrayList<>();
 
     private final List<VideoFile> videoFiles = new ArrayList<>();
     private final List<VideoFile> filteredFiles = new ArrayList<>();
@@ -77,6 +96,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private VideoAdapter videoAdapter;
     private VideoAdapter filteredAdapter;
     private FolderAdapter folderAdapter;
+    private FolderItem currentFolder;
     private VideoListDiffer videoListDiffer;
     private VideoListDiffer filteredListDiffer;
 
@@ -94,6 +114,10 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private ContentObserver mediaObserver;
 
     private VideoFile pendingVideoActionFile;
+    private final ArrayList<VideoFile> pendingDeleteFiles = new ArrayList<>();
+    private final ArrayList<VideoFile> legacyDeleteQueue = new ArrayList<>();
+    private int legacyDeletedCount;
+    private boolean legacyDeleteBatchActive;
     private String pendingRenameName;
     private PendingMediaAction pendingMediaAction = PendingMediaAction.NONE;
 
@@ -110,16 +134,24 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private final ActivityResultLauncher<IntentSenderRequest> mediaActionLauncher =
             registerForActivityResult(new ActivityResultContracts.StartIntentSenderForResult(), result -> {
-                if (result.getResultCode() != RESULT_OK || pendingVideoActionFile == null) {
+                boolean hasPendingTarget = pendingVideoActionFile != null
+                        || !pendingDeleteFiles.isEmpty();
+                if (result.getResultCode() != RESULT_OK || !hasPendingTarget) {
                     clearPendingMediaAction();
                     return;
                 }
 
                 if (pendingMediaAction == PendingMediaAction.DELETE) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        int deletedCount = pendingDeleteFiles.isEmpty()
+                                ? 1 : pendingDeleteFiles.size();
                         reloadAfterMutation();
-                        GlassUi.showToast(this, "Video deleted.");
+                        GlassUi.showToast(this, deletedCount == 1
+                                ? "Video deleted."
+                                : deletedCount + " videos deleted.");
                         clearPendingMediaAction();
+                    } else if (legacyDeleteBatchActive) {
+                        deleteApprovedLegacyItem();
                     } else {
                         performDelete(pendingVideoActionFile);
                     }
@@ -135,17 +167,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        ActivityManager activityManager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
-        boolean lowRamDevice = activityManager != null && activityManager.isLowRamDevice();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !lowRamDevice) {
-            try {
-                getWindow().setBackgroundBlurRadius(40);
-                getWindow().addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-
+        mainBlurTarget = findViewById(R.id.main_blur_target);
         titleCard = findViewById(R.id.titleCard);
         aboutBtn = findViewById(R.id.aboutBtn);
         aboutIcon = findViewById(R.id.aboutIcon);
@@ -157,6 +179,17 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         searchCard = findViewById(R.id.searchCard);
         searchInput = findViewById(R.id.searchInput);
         searchClear = findViewById(R.id.searchClear);
+        sortBtn = findViewById(R.id.sortBtn);
+        sortPopup = findViewById(R.id.sortPopup);
+        sortDismissLayer = findViewById(R.id.sortDismissLayer);
+        sortByName = findViewById(R.id.sortByName);
+        sortByDate = findViewById(R.id.sortByDate);
+        sortByDuration = findViewById(R.id.sortByDuration);
+        selectionActionBar = findViewById(R.id.selectionActionBar);
+        selectionRename = findViewById(R.id.selectionRename);
+        selectionShare = findViewById(R.id.selectionShare);
+        selectionDelete = findViewById(R.id.selectionDelete);
+        selectionDetails = findViewById(R.id.selectionDetails);
 
         int statusBarEst = 0;
         int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
@@ -165,22 +198,13 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         int estimatedPadding = statusBarEst + (int) ((12 + 59 + 8 + 48 + 8) * dp);
         recyclerView.setPadding(0, estimatedPadding, 0, 0);
 
-        if (isLightMode()) {
-            titleCard.setCardBackgroundColor(Color.argb(180, 255, 255, 255));
-            aboutBtn.setCardBackgroundColor(Color.argb(200, 240, 240, 245));
-            aboutIcon.setColorFilter(Color.argb(255, 34, 43, 58));
-            toggleViewBtn.setCardBackgroundColor(Color.argb(200, 240, 240, 245));
-            searchCard.setCardBackgroundColor(Color.argb(180, 220, 220, 225));
-        } else {
-            titleCard.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
-            aboutBtn.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
-            aboutIcon.setColorFilter(Color.argb(255, 245, 247, 255));
-            toggleViewBtn.setCardBackgroundColor(Color.argb(140, 15, 15, 20));
-            searchCard.setCardBackgroundColor(Color.argb(60, 255, 255, 255));
-        }
+        aboutIcon.setColorFilter(ContextCompat.getColor(this, R.color.glass_icon_tint));
+        setupBrowsingGlass();
 
         setupRecyclerView();
         setupSearch();
+        setupSelectionActions();
+        setupSortMenu();
         setupInsets();
 
         aboutBtn.setOnClickListener(v -> {
@@ -212,7 +236,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (currentState == ViewState.FOLDER_CONTENTS) {
+                if (sortPopup.getVisibility() == View.VISIBLE) {
+                    hideSortPopup();
+                } else if (selectionAdapter != null) {
+                    exitSelectionMode();
+                } else if (currentState == ViewState.FOLDER_CONTENTS) {
                     showFolderList();
                 } else if (currentState == ViewState.FOLDER_LIST) {
                     showAllVideos();
@@ -232,6 +260,25 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
         customizeStatusBar();
         checkPermissionsAndLoadFiles();
+    }
+
+    private void setupBrowsingGlass() {
+        ActivityManager activityManager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        boolean lowRamDevice = activityManager != null && activityManager.isLowRamDevice();
+        float blurRadius = lowRamDevice ? 10f : 18f;
+
+        setupGlassView(titleCard, blurRadius);
+        setupGlassView(aboutBtn, blurRadius);
+        setupGlassView(searchCard, blurRadius);
+        setupGlassView(toggleViewBtn, blurRadius);
+        setupGlassView(selectionActionBar, blurRadius);
+        setupGlassView(sortPopup, blurRadius);
+    }
+
+    private void setupGlassView(BlurView blurView, float blurRadius) {
+        blurView.setupWith(mainBlurTarget).setBlurRadius(blurRadius);
+        blurView.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
+        blurView.setClipToOutline(true);
     }
 
     private void setupRecyclerView() {
@@ -267,7 +314,251 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         });
     }
 
+    private void setupSortMenu() {
+        String savedMode = getSharedPreferences("library_ui", MODE_PRIVATE)
+                .getString("video_sort_mode", SortMode.DATE.name());
+        try {
+            sortMode = SortMode.valueOf(savedMode);
+        } catch (IllegalArgumentException ignored) {
+            sortMode = SortMode.DATE;
+        }
+
+        sortBtn.setOnClickListener(v -> {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            if (sortPopup.getVisibility() == View.VISIBLE) {
+                hideSortPopup();
+            } else {
+                showSortPopup();
+            }
+        });
+        sortDismissLayer.setOnClickListener(v -> hideSortPopup());
+        sortByName.setOnClickListener(v -> selectSortMode(SortMode.NAME));
+        sortByDate.setOnClickListener(v -> selectSortMode(SortMode.DATE));
+        sortByDuration.setOnClickListener(v -> selectSortMode(SortMode.DURATION));
+        updateSortOptions();
+    }
+
+    private void showSortPopup() {
+        updateSortOptions();
+        sortDismissLayer.setVisibility(View.VISIBLE);
+        sortPopup.setAlpha(0f);
+        sortPopup.setScaleX(0.96f);
+        sortPopup.setScaleY(0.96f);
+        sortPopup.setPivotX(sortPopup.getWidth());
+        sortPopup.setPivotY(0f);
+        sortPopup.setVisibility(View.VISIBLE);
+        sortPopup.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(150L)
+                .start();
+    }
+
+    private void hideSortPopup() {
+        sortPopup.animate().cancel();
+        sortPopup.setVisibility(View.GONE);
+        sortDismissLayer.setVisibility(View.GONE);
+    }
+
+    private void updateSortOptions() {
+        bindSortOption(sortByName, SortMode.NAME);
+        bindSortOption(sortByDate, SortMode.DATE);
+        bindSortOption(sortByDuration, SortMode.DURATION);
+    }
+
+    private void bindSortOption(TextView view, SortMode option) {
+        boolean selected = sortMode == option;
+        view.setActivated(selected);
+        view.setTextColor(ContextCompat.getColor(
+                this,
+                selected ? R.color.glass_text_accent : R.color.glass_text_primary
+        ));
+        view.setCompoundDrawablePadding(selected
+                ? (int) (8 * getResources().getDisplayMetrics().density) : 0);
+        view.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                0, 0, selected ? R.drawable.ic_check : 0, 0
+        );
+        view.setCompoundDrawableTintList(ColorStateList.valueOf(
+                ContextCompat.getColor(this, R.color.glass_text_accent)));
+    }
+
+    private void selectSortMode(SortMode selectedMode) {
+        sortMode = selectedMode;
+        getSharedPreferences("library_ui", MODE_PRIVATE)
+                .edit()
+                .putString("video_sort_mode", sortMode.name())
+                .apply();
+        hideSortPopup();
+        if (selectionAdapter != null) {
+            exitSelectionMode();
+        }
+
+        ArrayList<VideoFile> sorted = new ArrayList<>(videoFiles);
+        sortVideos(sorted);
+        videoListDiffer.submit(sorted, this::refreshVisibleVideosAfterSort);
+    }
+
+    private void refreshVisibleVideosAfterSort() {
+        if (currentState == ViewState.FOLDER_CONTENTS && currentFolder != null) {
+            showFolderContents(currentFolder);
+        } else if (currentState == ViewState.ALL_VIDEOS) {
+            if (currentSearchQuery().isEmpty()) {
+                recyclerView.setAdapter(videoAdapter);
+            } else {
+                rerunCurrentSearch();
+            }
+        }
+        recyclerView.scrollToPosition(0);
+    }
+
+    private void sortVideos(List<VideoFile> videos) {
+        Comparator<VideoFile> nameComparator = (left, right) -> {
+            String leftName = left.getName() == null ? "" : left.getName();
+            String rightName = right.getName() == null ? "" : right.getName();
+            int result = leftName.compareToIgnoreCase(rightName);
+            return result != 0 ? result : Long.compare(right.getDateModified(), left.getDateModified());
+        };
+
+        if (sortMode == SortMode.NAME) {
+            videos.sort(nameComparator);
+        } else if (sortMode == SortMode.DURATION) {
+            videos.sort((left, right) -> {
+                int result = Long.compare(right.getDurationMs(), left.getDurationMs());
+                return result != 0 ? result : nameComparator.compare(left, right);
+            });
+        } else {
+            videos.sort((left, right) -> {
+                int result = Long.compare(right.getDateModified(), left.getDateModified());
+                return result != 0 ? result : nameComparator.compare(left, right);
+            });
+        }
+    }
+
+    private void setupSelectionActions() {
+        selectionRename.setOnClickListener(v -> {
+            if (selectedVideos.size() != 1 || selectionAdapter == null) {
+                return;
+            }
+            VideoFile selected = selectedVideos.get(0);
+            exitSelectionMode();
+            onRenameVideo(selected);
+        });
+
+        selectionShare.setOnClickListener(v -> {
+            if (selectedVideos.isEmpty() || selectionAdapter == null) {
+                return;
+            }
+            VideoAdapter adapter = selectionAdapter;
+            ArrayList<VideoFile> videos = new ArrayList<>(selectedVideos);
+            exitSelectionMode();
+            adapter.shareVideos(videos);
+        });
+
+        selectionDelete.setOnClickListener(v -> {
+            if (!selectedVideos.isEmpty()) {
+                onDeleteVideos(new ArrayList<>(selectedVideos));
+            }
+        });
+
+        selectionDetails.setOnClickListener(v -> {
+            if (selectedVideos.size() != 1 || selectionAdapter == null) {
+                return;
+            }
+            VideoAdapter adapter = selectionAdapter;
+            VideoFile selected = selectedVideos.get(0);
+            exitSelectionMode();
+            adapter.showDetails(selected);
+        });
+    }
+
+    @Override
+    public void onVideoSelectionChanged(
+            VideoAdapter adapter,
+            List<VideoFile> selection
+    ) {
+        if (selection != null && !selection.isEmpty() && selectionAdapter != adapter) {
+            VideoAdapter previous = selectionAdapter;
+            selectionAdapter = adapter;
+            if (previous != null) {
+                previous.clearSelection();
+            }
+        }
+
+        if (selectionAdapter != null && selectionAdapter != adapter) {
+            return;
+        }
+
+        selectedVideos.clear();
+        if (selection != null) {
+            selectedVideos.addAll(selection);
+        }
+        if (selectedVideos.isEmpty()) {
+            selectionAdapter = null;
+        }
+        updateSelectionBar();
+    }
+
+    private void updateSelectionBar() {
+        boolean active = !selectedVideos.isEmpty();
+        boolean single = selectedVideos.size() == 1;
+        setSelectionActionEnabled(selectionRename, single);
+        setSelectionActionEnabled(selectionDetails, single);
+        setSelectionActionEnabled(selectionShare, active);
+        setSelectionActionEnabled(selectionDelete, active);
+
+        selectionActionBar.animate().cancel();
+        if (active) {
+            toggleViewBtn.setVisibility(View.GONE);
+            if (selectionActionBar.getVisibility() != View.VISIBLE) {
+                selectionActionBar.setAlpha(0f);
+                selectionActionBar.setTranslationY(
+                        20f * getResources().getDisplayMetrics().density);
+                selectionActionBar.setVisibility(View.VISIBLE);
+            }
+            selectionActionBar.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(180L)
+                    .start();
+        } else if (selectionActionBar.getVisibility() == View.VISIBLE) {
+            selectionActionBar.animate()
+                    .alpha(0f)
+                    .translationY(16f * getResources().getDisplayMetrics().density)
+                    .setDuration(140L)
+                    .withEndAction(() -> {
+                        if (selectedVideos.isEmpty()) {
+                            selectionActionBar.setVisibility(View.GONE);
+                            selectionActionBar.setTranslationY(0f);
+                            toggleViewBtn.setVisibility(View.VISIBLE);
+                        }
+                    })
+                    .start();
+        } else {
+            selectionActionBar.setVisibility(View.GONE);
+            toggleViewBtn.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void setSelectionActionEnabled(View action, boolean enabled) {
+        action.setEnabled(enabled);
+        action.setAlpha(enabled ? 1f : 0.34f);
+    }
+
+    private void exitSelectionMode() {
+        VideoAdapter adapter = selectionAdapter;
+        selectionAdapter = null;
+        selectedVideos.clear();
+        if (adapter != null) {
+            adapter.clearSelection();
+        }
+        updateSelectionBar();
+    }
+
     private void handleSearchText(CharSequence text) {
+        if (selectionAdapter != null) {
+            exitSelectionMode();
+        }
         final int generation = ++searchGeneration;
         if (pendingSearchRunnable != null) {
             mainHandler.removeCallbacks(pendingSearchRunnable);
@@ -361,6 +652,12 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             tlp.bottomMargin = navBarHeight + 24;
             toggleViewBtn.setLayoutParams(tlp);
 
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams selectionLp =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)
+                            selectionActionBar.getLayoutParams();
+            selectionLp.bottomMargin = navBarHeight + 24;
+            selectionActionBar.setLayoutParams(selectionLp);
+
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams alp =
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) aboutBtn.getLayoutParams();
             alp.topMargin = statusBarHeight + 12;
@@ -448,7 +745,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private void refreshPlaybackPresentation() {
         List<VideoFile> reordered = new ArrayList<>(videoFiles);
-        pinLastPlayed(reordered);
+        sortVideos(reordered);
         videoListDiffer.submit(reordered, () -> {
             refreshVideoAdapter(videoAdapter);
             refreshVideoAdapter(filteredAdapter);
@@ -469,6 +766,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void showAllVideos() {
+        if (selectionAdapter != null) {
+            exitSelectionMode();
+        }
+        hideSortPopup();
+        currentFolder = null;
         currentState = ViewState.ALL_VIDEOS;
         toggleIcon.setImageResource(R.drawable.folder);
         searchCard.setVisibility(View.VISIBLE);
@@ -487,6 +789,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void showFolderList() {
+        if (selectionAdapter != null) {
+            exitSelectionMode();
+        }
+        hideSortPopup();
+        currentFolder = null;
         currentState = ViewState.FOLDER_LIST;
         toggleIcon.setImageResource(R.drawable.video);
         searchCard.setVisibility(View.GONE);
@@ -506,6 +813,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void showFolderContents(FolderItem folder) {
+        if (selectionAdapter != null) {
+            exitSelectionMode();
+        }
+        hideSortPopup();
+        currentFolder = folder;
         currentState = ViewState.FOLDER_CONTENTS;
         int gap = (int) (8 * getResources().getDisplayMetrics().density);
         recyclerView.setPadding(0, titleCard.getBottom() + gap,
@@ -679,6 +991,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                         long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID));
                         String displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME));
                         long dateModified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED));
+                        long durationMs = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION));
                         long sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE));
                         Uri contentUri = ContentUris.withAppendedId(collection, id);
 
@@ -691,6 +1004,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                                 contentUri,
                                 sizeBytes,
                                 dateModified,
+                                durationMs,
                                 folderName,
                                 folderKey,
                                 "media:" + id
@@ -719,7 +1033,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 }
 
                 libraryLoaded = true;
-                pinLastPlayed(loadedFiles);
+                sortVideos(loadedFiles);
                 videoListDiffer.submit(loadedFiles,
                         () -> onLibraryListCommitted(loadedFiles.isEmpty()));
             });
@@ -759,6 +1073,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                     MediaStore.Video.Media.DISPLAY_NAME,
                     MediaStore.Video.Media.DATE_MODIFIED,
                     MediaStore.Video.Media.SIZE,
+                    MediaStore.Video.Media.DURATION,
                     MediaStore.Video.Media.RELATIVE_PATH,
                     MediaStore.Video.Media.BUCKET_DISPLAY_NAME
             };
@@ -768,6 +1083,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 MediaStore.Video.Media.DISPLAY_NAME,
                 MediaStore.Video.Media.DATE_MODIFIED,
                 MediaStore.Video.Media.SIZE,
+                MediaStore.Video.Media.DURATION,
                 MediaStore.Video.Media.DATA
         };
     }
@@ -909,14 +1225,112 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     @Override
-    public void onDeleteVideo(VideoFile videoFile) {
+    public void onDeleteVideos(List<VideoFile> videos) {
+        if (videos == null || videos.isEmpty()) {
+            return;
+        }
+        ArrayList<VideoFile> requestedVideos = new ArrayList<>(videos);
+        int count = requestedVideos.size();
         GlassUi.showConfirmDialog(
                 this,
-                "Delete video",
-                "This will remove the selected media item from device storage.",
+                count == 1 ? "Delete video" : "Delete " + count + " videos",
+                count == 1
+                        ? "This will remove the selected media item from device storage."
+                        : "This will permanently remove all selected videos from device storage.",
                 "Delete",
-                () -> performDelete(videoFile)
+                () -> {
+                    exitSelectionMode();
+                    if (requestedVideos.size() == 1) {
+                        performDelete(requestedVideos.get(0));
+                    } else {
+                        performDeleteBatch(requestedVideos);
+                    }
+                }
         );
+    }
+
+    private void performDeleteBatch(List<VideoFile> videos) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            requestScopedDeleteAccess(videos);
+            return;
+        }
+
+        legacyDeleteQueue.clear();
+        legacyDeleteQueue.addAll(videos);
+        legacyDeletedCount = 0;
+        legacyDeleteBatchActive = true;
+        deleteNextLegacyItem();
+    }
+
+    private void requestScopedDeleteAccess(List<VideoFile> videos) {
+        pendingDeleteFiles.clear();
+        pendingDeleteFiles.addAll(videos);
+        pendingVideoActionFile = null;
+        pendingRenameName = null;
+        pendingMediaAction = PendingMediaAction.DELETE;
+
+        ArrayList<Uri> uris = new ArrayList<>();
+        for (VideoFile video : videos) {
+            uris.add(video.getContentUri());
+        }
+        try {
+            PendingIntent pendingIntent =
+                    MediaStore.createDeleteRequest(getContentResolver(), uris);
+            mediaActionLauncher.launch(new IntentSenderRequest.Builder(
+                    pendingIntent.getIntentSender()).build());
+        } catch (Exception e) {
+            clearPendingMediaAction();
+            GlassUi.showToast(this, "Delete request failed: " + e.getMessage());
+        }
+    }
+
+    private void deleteNextLegacyItem() {
+        if (!legacyDeleteBatchActive) {
+            return;
+        }
+        if (legacyDeleteQueue.isEmpty()) {
+            int deletedCount = legacyDeletedCount;
+            legacyDeleteBatchActive = false;
+            if (deletedCount > 0) {
+                reloadAfterMutation();
+            }
+            GlassUi.showToast(this, deletedCount + " videos deleted.");
+            clearPendingMediaAction();
+            return;
+        }
+
+        VideoFile video = legacyDeleteQueue.remove(0);
+        try {
+            if (getContentResolver().delete(video.getContentUri(), null, null) > 0) {
+                legacyDeletedCount++;
+            }
+            mainHandler.post(this::deleteNextLegacyItem);
+        } catch (SecurityException securityException) {
+            requestScopedWriteAccess(
+                    video,
+                    PendingMediaAction.DELETE,
+                    null,
+                    securityException
+            );
+        } catch (Exception ignored) {
+            mainHandler.post(this::deleteNextLegacyItem);
+        }
+    }
+
+    private void deleteApprovedLegacyItem() {
+        VideoFile approvedVideo = pendingVideoActionFile;
+        pendingVideoActionFile = null;
+        pendingMediaAction = PendingMediaAction.NONE;
+        if (approvedVideo != null) {
+            try {
+                if (getContentResolver().delete(
+                        approvedVideo.getContentUri(), null, null) > 0) {
+                    legacyDeletedCount++;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        mainHandler.post(this::deleteNextLegacyItem);
     }
 
     private String normalizeDisplayName(String currentName, String requestedName) {
@@ -1019,20 +1433,15 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private void clearPendingMediaAction() {
         pendingVideoActionFile = null;
+        pendingDeleteFiles.clear();
+        legacyDeleteQueue.clear();
+        legacyDeleteBatchActive = false;
+        legacyDeletedCount = 0;
         pendingRenameName = null;
         pendingMediaAction = PendingMediaAction.NONE;
     }
 
     private void showAboutDialog() {
-        List<GlassUi.InfoItem> rows = new ArrayList<>();
-        rows.add(new GlassUi.InfoItem("Project", "CineStream"));
-        rows.add(new GlassUi.InfoItem("Version", "v9.2"));
-        rows.add(new GlassUi.InfoItem("Developer", "Aditya"));
-        rows.add(new GlassUi.InfoItem("About", "CineStream is a local-first Android video player focused on clean browsing, smooth playback, folder navigation, and a refined glass-inspired interface."));
-        rows.add(new GlassUi.InfoItem("Highlights", "Folder and list browsing, playlist-aware next and previous playback, subtitle and audio track selection, gesture controls, resume progress, and detailed media inspection."));
-        rows.add(new GlassUi.InfoItem("Design", "Built to keep the library simple on the home screen while giving the player a modern full-screen experience with lightweight overlays and direct controls."));
-        rows.add(new GlassUi.InfoItem("License", "MIT License"));
-        rows.add(new GlassUi.InfoItem("Open source note", "This project may be used, copied, modified, merged, published, distributed, sublicensed, and sold under the terms of the MIT License."));
-        GlassUi.showInfoDialog(this, "About CineStream", rows);
+        GlassUi.showInfoDialog(this, "About CineStream", Collections.emptyList());
     }
 }

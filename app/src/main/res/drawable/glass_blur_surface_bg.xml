@@ -2,11 +2,11 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape>
-            <solid android:color="@color/glass_surface_soft_base" />
+            <solid android:color="@android:color/transparent" />
             <stroke
                 android:width="1dp"
                 android:color="@color/glass_surface_stroke" />
-            <corners android:radius="22dp" />
+            <corners android:radius="28dp" />
         </shape>
     </item>
     <item
@@ -18,8 +18,9 @@
             <gradient
                 android:angle="270"
                 android:startColor="@color/glass_surface_highlight"
+                android:centerColor="@color/glass_surface_center"
                 android:endColor="@color/glass_surface_shadow" />
-            <corners android:radius="21dp" />
+            <corners android:radius="27dp" />
         </shape>
     </item>
 </layer-list>

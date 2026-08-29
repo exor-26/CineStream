@@ -9,4 +9,30 @@
     <color name="colorOnBackgroundNight">#FFFFFF</color> <!-- Text color for dark background -->
     <color name="transparent">#00000000</color>
     <color name="colorAccent">#6617BD</color>
+
+    <!-- Shared frosted-glass palette: light mode. -->
+    <color name="glass_text_primary">#172033</color>
+    <color name="glass_text_secondary">#566277</color>
+    <color name="glass_text_tertiary">#748095</color>
+    <color name="glass_text_accent">#5A3DB6</color>
+    <color name="glass_text_selected">#4B2AA7</color>
+    <color name="glass_icon_tint">#222B3A</color>
+    <color name="glass_divider">#24151B27</color>
+    <color name="glass_surface_base">#B8F4F6FB</color>
+    <color name="glass_surface_soft_base">#8AFFFFFF</color>
+    <color name="glass_surface_stroke">#AFFFFFFF</color>
+    <color name="glass_surface_highlight">#70FFFFFF</color>
+    <color name="glass_surface_center">#24FFFFFF</color>
+    <color name="glass_surface_shadow">#38DCE1EB</color>
+    <color name="glass_row_default">#24FFFFFF</color>
+    <color name="glass_row_pressed">#48FFFFFF</color>
+    <color name="glass_row_selected">#335A3DB6</color>
+    <color name="glass_secondary_default">#38FFFFFF</color>
+    <color name="glass_secondary_pressed">#58FFFFFF</color>
+    <color name="glass_input_fill">#48FFFFFF</color>
+    <color name="main_glass_overlay_strong">#B4F0F0F5</color>
+    <color name="main_glass_overlay_soft">#B4DCDCE1</color>
+    <color name="player_glass_overlay">#8A151820</color>
+    <color name="selection_action_icon">#354052</color>
+    <color name="selection_delete_icon">#C84455</color>
 </resources>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="glass_text_primary">#F7F9FF</color>
+    <color name="glass_text_secondary">#BFC8D8</color>
+    <color name="glass_text_tertiary">#96A3B8</color>
+    <color name="glass_text_accent">#9FB7FF</color>
+    <color name="glass_text_selected">#B8C7FF</color>
+    <color name="glass_icon_tint">#F5F7FF</color>
+    <color name="glass_divider">#2EFFFFFF</color>
+    <color name="glass_surface_base">#99151820</color>
+    <color name="glass_surface_soft_base">#6612141B</color>
+    <color name="glass_surface_stroke">#42FFFFFF</color>
+    <color name="glass_surface_highlight">#24FFFFFF</color>
+    <color name="glass_surface_center">#091C2230</color>
+    <color name="glass_surface_shadow">#24101420</color>
+    <color name="glass_row_default">#10FFFFFF</color>
+    <color name="glass_row_pressed">#22FFFFFF</color>
+    <color name="glass_row_selected">#2E708CFF</color>
+    <color name="glass_secondary_default">#12FFFFFF</color>
+    <color name="glass_secondary_pressed">#24FFFFFF</color>
+    <color name="glass_input_fill">#14FFFFFF</color>
+    <color name="main_glass_overlay_strong">#78151820</color>
+    <color name="main_glass_overlay_soft">#6612141B</color>
+    <color name="player_glass_overlay">#8A151820</color>
+    <color name="selection_action_icon">#D8DEE9</color>
+    <color name="selection_delete_icon">#E06A78</color>
+</resources>

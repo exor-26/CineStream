@@ -2,6 +2,32 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.5 - 2026-08-29
+
+### Added
+
+- Persistent library sorting by name, newest date, or duration
+- Long-press multi-selection with compact rename, share, details, and delete actions
+- Scoped-storage-safe multi-video sharing and batch deletion
+- Theme-aware selection indicators on video cards
+
+### Changed
+
+- Library chrome, dialogs, sheets, and player feedback now share one transparent frosted-glass visual system
+- The About surface now provides structured project documentation, the full developer name, and a guarded repository action
+- Audio and subtitle selections use the active system theme for text, selection, and check states
+- Pinch zoom scales the complete Media3 content frame and reports a practical live percentage
+- Crop modes remain direct one-tap actions with animated feedback and distinct Original, Fill, and Fit behavior
+- Full-screen back and Home gestures retain Android system navigation while providing a standard second-swipe exit hint
+
+### Fixed
+
+- Upward track-list scrolling being interpreted as sheet dismissal after lifting and touching again
+- Landscape lock control placement conflicting with display cutouts
+- Zoom expanding vertically while leaving unintended horizontal voids
+- Stale single-item actions remaining available during multi-selection
+- Completed library sorting being lost after media refresh or playback return
+
 ## 9.4 - 2026-08-29
 
 ### Added

@@ -33,6 +33,7 @@ import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -42,13 +43,9 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     public interface Listener {
         void onPlayVideo(VideoFile videoFile, List<VideoFile> playlist, int position);
         void onRenameVideo(VideoFile videoFile);
-        void onDeleteVideo(VideoFile videoFile);
+        void onDeleteVideos(List<VideoFile> videoFiles);
+        void onVideoSelectionChanged(VideoAdapter adapter, List<VideoFile> selectedVideos);
     }
-
-    private static final int ACTION_RENAME = 1;
-    private static final int ACTION_SHARE  = 2;
-    private static final int ACTION_DELETE = 3;
-    private static final int ACTION_INFO   = 4;
 
     // All list/search/folder adapters share the same small worker pool and bounded caches.
     // This prevents each temporary adapter from creating its own threads and re-parsing the same
@@ -61,6 +58,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     private final Context         context;
     private final List<VideoFile> videoFiles;
     private final Listener        listener;
+    private final LinkedHashSet<String> selectedPlaybackKeys = new LinkedHashSet<>();
 
     public VideoAdapter(Context context, List<VideoFile> videoFiles, Listener listener) {
         this.context    = context;
@@ -95,6 +93,9 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
         holder.boundPlaybackKey = playbackKey;
         holder.videoName.setText(videoFile.getName());
+        boolean selected = selectedPlaybackKeys.contains(playbackKey);
+        holder.selectionCheck.setVisibility(selected ? View.VISIBLE : View.GONE);
+        holder.itemView.setActivated(selected);
 
         // ── Playback progress bar ────────────────────────────────────
         if (holder.videoProgress != null) {
@@ -214,39 +215,97 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             if (adapterPosition == RecyclerView.NO_POSITION) {
                 return;
             }
-            listener.onPlayVideo(videoFile, videoFiles, adapterPosition);
+            VideoFile clickedVideo = videoFiles.get(adapterPosition);
+            if (!selectedPlaybackKeys.isEmpty()) {
+                toggleSelection(clickedVideo, adapterPosition);
+                return;
+            }
+            listener.onPlayVideo(clickedVideo, videoFiles, adapterPosition);
         });
 
         holder.itemView.setOnLongClickListener(v -> {
-            List<GlassUi.ActionItem> actions = new ArrayList<>();
-            actions.add(new GlassUi.ActionItem(ACTION_RENAME, "Rename",
-                    "Update the media title shown by the system library"));
-            actions.add(new GlassUi.ActionItem(ACTION_SHARE, "Share",
-                    "Send the video through a scoped-storage safe share intent"));
-            actions.add(new GlassUi.ActionItem(ACTION_DELETE, "Delete",
-                    "Remove the media item from device storage"));
-            actions.add(new GlassUi.ActionItem(ACTION_INFO, "Detailed info",
-                    "Inspect container, codecs, bitrate, resolution, and more"));
-
-            GlassUi.showActionSheet(context, videoFile.getName(), actions, item -> {
-                if (item.id == ACTION_DELETE) {
-                    listener.onDeleteVideo(videoFile);
-                } else if (item.id == ACTION_RENAME) {
-                    listener.onRenameVideo(videoFile);
-                } else if (item.id == ACTION_INFO) {
-                    // Detailed Info intentionally keeps the complete parser + FFmpeg fallback.
-                    EXECUTOR.execute(() -> {
-                        MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, true);
-                        MAIN_HANDLER.post(() -> showVideoInfo(videoFile, snapshot));
-                    });
-                } else if (item.id == ACTION_SHARE) {
-                    shareVideo(videoFile);
-                }
-            });
+            int adapterPosition = holder.getBindingAdapterPosition();
+            if (adapterPosition == RecyclerView.NO_POSITION) {
+                return false;
+            }
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+            toggleSelection(videoFiles.get(adapterPosition), adapterPosition);
             return true;
         });
 
         bindRowMetadata(holder, videoFile, playbackKey);
+    }
+
+    private void toggleSelection(VideoFile videoFile, int adapterPosition) {
+        String key = videoFile.getPlaybackKey();
+        if (!selectedPlaybackKeys.add(key)) {
+            selectedPlaybackKeys.remove(key);
+        }
+        notifyItemChanged(adapterPosition);
+        listener.onVideoSelectionChanged(this, getSelectedVideos());
+    }
+
+    public List<VideoFile> getSelectedVideos() {
+        ArrayList<VideoFile> selected = new ArrayList<>();
+        for (VideoFile file : videoFiles) {
+            if (selectedPlaybackKeys.contains(file.getPlaybackKey())) {
+                selected.add(file);
+            }
+        }
+        return selected;
+    }
+
+    public void clearSelection() {
+        if (selectedPlaybackKeys.isEmpty()) {
+            return;
+        }
+        selectedPlaybackKeys.clear();
+        notifyItemRangeChanged(0, getItemCount());
+        listener.onVideoSelectionChanged(this, new ArrayList<>());
+    }
+
+    public void showDetails(VideoFile videoFile) {
+        EXECUTOR.execute(() -> {
+            MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, true);
+            MAIN_HANDLER.post(() -> showVideoInfo(videoFile, snapshot));
+        });
+    }
+
+    public void shareVideos(List<VideoFile> videos) {
+        if (videos == null || videos.isEmpty()) {
+            return;
+        }
+        ArrayList<Uri> uris = new ArrayList<>();
+        ClipData clipData = null;
+        for (VideoFile video : videos) {
+            Uri uri = video.getContentUri();
+            uris.add(uri);
+            if (clipData == null) {
+                clipData = ClipData.newUri(context.getContentResolver(), video.getName(), uri);
+            } else {
+                clipData.addItem(new ClipData.Item(uri));
+            }
+        }
+
+        Intent intent;
+        if (uris.size() == 1) {
+            intent = new Intent(Intent.ACTION_SEND);
+            intent.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+        } else {
+            intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+            intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+        }
+        intent.setType("video/*");
+        intent.setClipData(clipData);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            context.startActivity(Intent.createChooser(
+                    intent,
+                    uris.size() == 1 ? "Share video via" : "Share videos via"
+            ));
+        } catch (Exception e) {
+            GlassUi.showToast(context, "No app available to share the selected video.");
+        }
     }
 
     /**
@@ -377,6 +436,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
     public static class VideoViewHolder extends RecyclerView.ViewHolder {
         android.widget.ImageView videoThumbnail;
+        android.widget.ImageView selectionCheck;
         TextView videoName, videoSize, videoDuration, videoQuality;
         View cardTint;
         View videoProgress;
@@ -387,6 +447,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         public VideoViewHolder(@NonNull View itemView) {
             super(itemView);
             videoThumbnail = itemView.findViewById(R.id.video_thumbnail);
+            selectionCheck = itemView.findViewById(R.id.video_selection_check);
             videoName      = itemView.findViewById(R.id.video_name);
             videoSize      = itemView.findViewById(R.id.video_size);
             videoDuration  = itemView.findViewById(R.id.video_duration);
