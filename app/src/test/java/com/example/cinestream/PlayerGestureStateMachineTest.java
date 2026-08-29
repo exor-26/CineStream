@@ -25,15 +25,18 @@ public class PlayerGestureStateMachineTest {
         assertEquals(
                 PlayerGestureStateMachine.Owner.BRIGHTNESS,
                 machine.classifyUnlockedMove(104f, 240f, 1000f, 8));
+        assertEquals(100f, machine.getDownX(), 0f);
         assertEquals(
                 PlayerGestureStateMachine.Owner.BRIGHTNESS,
-                machine.classifyUnlockedMove(400f, 245f, 1000f, 8));
+                machine.classifyUnlockedMove(800f, 245f, 1000f, 8));
+        assertEquals(100f, machine.getDownX(), 0f);
 
         machine.resetGesture();
         machine.beginGesture(800f, 200f, 1000f, 1000f);
         assertEquals(
                 PlayerGestureStateMachine.Owner.VOLUME,
                 machine.classifyUnlockedMove(804f, 240f, 1000f, 8));
+        assertEquals(800f, machine.getDownX(), 0f);
     }
 
     @Test

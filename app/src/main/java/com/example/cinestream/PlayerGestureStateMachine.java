@@ -43,6 +43,10 @@ final class PlayerGestureStateMachine {
         return owner;
     }
 
+    float getDownX() {
+        return downX;
+    }
+
     Owner beginGesture(float x, float y, float width, float height) {
         downX = x;
         downY = y;

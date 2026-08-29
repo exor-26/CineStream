@@ -82,7 +82,7 @@ public final class UnifiedPlayerView extends PlayerView {
                                 event.getX(), event.getY(), getWidth(), touchSlop);
                 if (owner == PlayerGestureStateMachine.Owner.BRIGHTNESS
                         || owner == PlayerGestureStateMachine.Owner.VOLUME) {
-                    return super.dispatchTouchEvent(event);
+                    return dispatchOwnedVerticalEvent(event, owner);
                 }
                 if (owner == PlayerGestureStateMachine.Owner.SEEK
                         || owner == PlayerGestureStateMachine.Owner.PINCH_ZOOM
@@ -114,6 +114,26 @@ public final class UnifiedPlayerView extends PlayerView {
             default:
                 return true;
         }
+    }
+
+    private boolean dispatchOwnedVerticalEvent(
+            MotionEvent source,
+            PlayerGestureStateMachine.Owner owner
+    ) {
+        MotionEvent delegated = MotionEvent.obtain(source);
+        float anchorX = gestureStateMachine.getDownX();
+        if (owner == PlayerGestureStateMachine.Owner.BRIGHTNESS) {
+            anchorX = Math.min(anchorX, Math.max(0f, getWidth() / 2f - 1f));
+        } else if (owner == PlayerGestureStateMachine.Owner.VOLUME) {
+            anchorX = Math.max(anchorX, Math.min(getWidth(), getWidth() / 2f + 1f));
+        }
+        // The legacy brightness/volume executor still checks the current X coordinate. Keep the
+        // delegated event anchored to the classified side so crossing the screen midpoint cannot
+        // change gesture ownership after touch slop has resolved the state.
+        delegated.setLocation(anchorX, source.getY());
+        boolean handled = super.dispatchTouchEvent(delegated);
+        delegated.recycle();
+        return handled;
     }
 
     public void lockPlayer(@Nullable View hapticSource) {
