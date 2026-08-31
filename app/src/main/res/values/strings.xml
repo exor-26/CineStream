@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="pip_play">Play</string>
+    <string name="pip_pause">Pause</string>
+    <string name="pip_previous_video">Previous video</string>
+    <string name="pip_next_video">Next video</string>
     <string name="app_name">CineStream</string>
     <string name="add_video">Add Video</string>
     <string name="rotate_description">Rotate Screen</string>

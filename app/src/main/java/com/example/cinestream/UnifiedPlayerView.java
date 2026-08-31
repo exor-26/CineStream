@@ -43,6 +43,7 @@ public final class UnifiedPlayerView extends PlayerView {
 
     private boolean nativeControllerOwnsGesture;
     private boolean delegatedGestureCancelled;
+    private boolean pictureInPictureMode;
 
     private float currentZoom = 1f;
     private int lastZoomPercentage = 100;
@@ -161,8 +162,28 @@ public final class UnifiedPlayerView extends PlayerView {
         playerUnlockedListener = listener;
     }
 
+    public void setPictureInPictureMode(boolean enabled) {
+        pictureInPictureMode = enabled;
+        resetTransientPlayerUi();
+        if (enabled) {
+            hideController();
+            setUseController(false);
+            setPlayerControlsEnabled(false);
+        } else if (!gestureStateMachine.isLocked()) {
+            setUseController(true);
+            setPlayerControlsEnabled(true);
+        }
+    }
+
+    public boolean isPlayerLocked() {
+        return gestureStateMachine.isLocked();
+    }
+
     @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
+        if (pictureInPictureMode) {
+            return super.dispatchTouchEvent(event);
+        }
         int action = event.getActionMasked();
 
         if (gestureStateMachine.isLocked()) {

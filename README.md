@@ -14,6 +14,7 @@ CineStream is a local Android video player focused on fast on-device browsing, b
 - Share multiple videos through scoped-storage-safe `content://` URIs
 - Rename, inspect, and batch-delete media through modern `MediaStore` flows
 - Support external `ACTION_VIEW` playback intents
+- Continue active playback in Android picture-in-picture with Previous, Play/Pause, Next, Expand, and Close controls
 - Continuous two-finger pinch zoom with a live percentage preview
 - One-finger horizontal seek with signed delta and target-time preview
 - Left-side brightness and right-side volume gestures with sticky gesture ownership
@@ -139,7 +140,7 @@ Contributions are welcome. For anything substantial:
 
 Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
-Download the signed production APK for your device from [CineStream 9.5.1](https://github.com/exor-26/CineStream/releases/tag/v9.5.1):
+Download the signed production APK for your device from [CineStream 9.6](https://github.com/exor-26/CineStream/releases/tag/v9.6):
 
 - `arm64-v8a` for almost all current 64-bit Android devices
 - `armeabi-v7a` for supported older 32-bit Android devices
@@ -148,8 +149,8 @@ The APKs are split by ABI to keep the installed download compact. CineStream doe
 
 ## Current version
 
-- `versionName`: `9.5.1`
-- `versionCode`: `91`
+- `versionName`: `9.6`
+- `versionCode`: `92`
 
 ## Release packaging
 
@@ -158,7 +159,7 @@ Release builds use split APKs:
 - `arm64-v8a` for current 64-bit Android hardware
 - `armeabi-v7a` for supported 32-bit Android hardware
 
-Version 9.5.1 keeps the complete 9.5 experience while restoring last-played-first library ordering beneath every sort mode and removing the expensive live blur pass that could hitch when opening the audio/subtitle sheet. The hardware-first, OEM-independent recovery architecture from 9.4 remains unchanged.
+Version 9.6 adds lifecycle-safe picture-in-picture for actively playing videos. Home continues playback in the floating window, explicit Back exits normally, expanding preserves Play/Pause state, and closing PiP stops and releases playback. High-contrast Previous, Play/Pause, and Next actions remain usable across light and dark system themes. The hardware-first, OEM-independent recovery architecture remains unchanged.
 
 ## Roadmap ideas
 

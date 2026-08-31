@@ -1,10 +1,18 @@
 package com.example.cinestream;
 
 import android.annotation.SuppressLint;
+import android.app.PendingIntent;
+import android.app.PictureInPictureParams;
+import android.app.RemoteAction;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.database.Cursor;
+import android.graphics.Rect;
+import android.graphics.drawable.Icon;
 import android.media.AudioManager;
 import android.media.audiofx.LoudnessEnhancer;
 import android.net.Uri;
@@ -14,6 +22,7 @@ import android.os.Handler;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.util.Rational;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
@@ -26,6 +35,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.OptIn;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.ViewCompat;
@@ -42,6 +52,7 @@ import androidx.media3.common.Timeline;
 import androidx.media3.common.TrackGroup;
 import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
+import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
@@ -51,6 +62,7 @@ import androidx.media3.exoplayer.source.FilteringMediaSource;
 import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.exoplayer.source.MergingMediaSource;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+import androidx.media3.session.MediaSession;
 import androidx.media3.ui.PlayerView;
 
 import com.example.cinestream.ffmpeg.CineFfmpegLibrary;
@@ -74,9 +86,22 @@ public class VideoPlayerActivity extends AppCompatActivity {
     public static final String EXTRA_PLAYLIST_TITLES = "PLAYLIST_TITLES";
     public static final String EXTRA_PLAYLIST_INDEX = "PLAYLIST_INDEX";
     private static final int ACTION_SUBTITLE_OFF = -1;
+    private static final String ACTION_PIP_PLAY =
+            "com.example.cinestream.action.PIP_PLAY";
+    private static final String ACTION_PIP_PAUSE =
+            "com.example.cinestream.action.PIP_PAUSE";
+    private static final String ACTION_PIP_PREVIOUS =
+            "com.example.cinestream.action.PIP_PREVIOUS";
+    private static final String ACTION_PIP_NEXT =
+            "com.example.cinestream.action.PIP_NEXT";
+    private static final int REQUEST_PIP_PLAY = 6101;
+    private static final int REQUEST_PIP_PAUSE = 6102;
+    private static final int REQUEST_PIP_PREVIOUS = 6103;
+    private static final int REQUEST_PIP_NEXT = 6104;
 
     private ExoPlayer exoPlayer;
     private DefaultTrackSelector trackSelector;
+    private MediaSession mediaSession;
     private UnifiedPlayerView playerView;
     private ImageButton rotateButton;
     private ImageButton cropButton;
@@ -147,6 +172,13 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private int selectedAudioActionId = Integer.MIN_VALUE;
     private int selectedSubtitleActionId = ACTION_SUBTITLE_OFF;
     private boolean restoringTrackSelection;
+    private boolean pictureInPictureMode;
+    private boolean pictureInPictureTransitionPending;
+    private boolean lifecyclePauseWasForPictureInPicture;
+    private boolean resumePlaybackAfterLifecyclePause = true;
+    private boolean suppressPictureInPictureForExplicitExit;
+    private boolean controlsWereVisibleBeforePictureInPicture;
+    private boolean pictureInPictureActionReceiverRegistered;
 
     private float maxVolume;
     private float currentVolume;
@@ -155,6 +187,25 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private LoudnessEnhancer loudnessEnhancer;
     private final Runnable hideBrightnessOverlayRunnable = () -> brightnessOverlay.setVisibility(View.GONE);
     private final Runnable hideVolumeOverlayRunnable = () -> volumeOverlay.setVisibility(View.GONE);
+    private final Runnable pictureInPictureParamsRunnable = this::updatePictureInPictureParams;
+    private final BroadcastReceiver pictureInPictureActionReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (exoPlayer == null || intent == null) {
+                return;
+            }
+            String action = intent.getAction();
+            if (ACTION_PIP_PLAY.equals(action)) {
+                exoPlayer.play();
+            } else if (ACTION_PIP_PAUSE.equals(action)) {
+                exoPlayer.pause();
+            } else if (ACTION_PIP_PREVIOUS.equals(action)) {
+                selectPictureInPicturePlaylistItem(-1);
+            } else if (ACTION_PIP_NEXT.equals(action)) {
+                selectPictureInPicturePlaylistItem(1);
+            }
+        }
+    };
 
     private final AnalyticsListener videoPerformanceListener = new AnalyticsListener() {
         @Override
@@ -256,6 +307,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             currentVideoAssessment = null;
             capabilityWarningLogged = false;
             tvVideoName.setText(resolveCurrentTitle());
+            schedulePictureInPictureParamsUpdate();
         }
 
         @Override
@@ -280,6 +332,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             } else {
                 stopFirstFrameWatchdogTimer();
             }
+            schedulePictureInPictureParamsUpdate();
         }
 
         @Override
@@ -289,6 +342,12 @@ public class VideoPlayerActivity extends AppCompatActivity {
             } else {
                 stopFirstFrameWatchdogTimer();
             }
+            schedulePictureInPictureParamsUpdate();
+        }
+
+        @Override
+        public void onVideoSizeChanged(VideoSize videoSize) {
+            schedulePictureInPictureParamsUpdate();
         }
 
         @Override
@@ -343,6 +402,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_player);
         installFullscreenExitHint();
+        registerPictureInPictureActionReceiver();
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
@@ -384,7 +444,15 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
         btnBack.setOnClickListener(v -> {
             v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            suppressPictureInPictureForExplicitExit = true;
             finish();
+        });
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                suppressPictureInPictureForExplicitExit = true;
+                finish();
+            }
         });
 
         final View topBar = findViewById(R.id.top_bar);
@@ -470,6 +538,12 @@ public class VideoPlayerActivity extends AppCompatActivity {
         setupInteractionListeners();
         hideSystemUI();
         resetHideControlsTimer();
+        if (Build.VERSION.SDK_INT >= PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                && isInPictureInPictureMode()) {
+            pictureInPictureMode = true;
+            applyPictureInPictureUi(true);
+        }
+        schedulePictureInPictureParamsUpdate();
     }
 
     private void initializePlayerShell() {
@@ -502,6 +576,8 @@ public class VideoPlayerActivity extends AppCompatActivity {
         exoPlayer.addListener(playbackListener);
         exoPlayer.addAnalyticsListener(videoPerformanceListener);
         playerView.setPlayer(exoPlayer);
+        mediaSession = new MediaSession.Builder(this, exoPlayer).build();
+        schedulePictureInPictureParamsUpdate();
     }
 
     private void createPlayer(
@@ -1733,6 +1809,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
         stopSoftwareObservation();
         resetFirstFrameWatchdog();
         releaseLoudnessEnhancer();
+        if (mediaSession != null) {
+            mediaSession.release();
+            mediaSession = null;
+        }
         if (exoPlayer != null) {
             exoPlayer.removeListener(playbackListener);
             exoPlayer.removeAnalyticsListener(videoPerformanceListener);
@@ -1741,6 +1821,315 @@ public class VideoPlayerActivity extends AppCompatActivity {
             exoPlayer = null;
         }
         trackSelector = null;
+    }
+
+    private boolean shouldEnterPictureInPicture() {
+        return exoPlayer != null
+                && !suppressPictureInPictureForExplicitExit
+                && PictureInPicturePolicy.shouldEnter(
+                Build.VERSION.SDK_INT,
+                exoPlayer.getPlayWhenReady(),
+                exoPlayer.getPlaybackState(),
+                exoPlayer.getCurrentMediaItem() != null
+        );
+    }
+
+    private void schedulePictureInPictureParamsUpdate() {
+        if (Build.VERSION.SDK_INT < PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                || playerView == null) {
+            return;
+        }
+        playerView.removeCallbacks(pictureInPictureParamsRunnable);
+        playerView.post(pictureInPictureParamsRunnable);
+    }
+
+    private void updatePictureInPictureParams() {
+        if (Build.VERSION.SDK_INT < PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                || playerView == null
+                || isFinishing()
+                || isDestroyed()) {
+            return;
+        }
+
+        PictureInPictureParams params = buildPictureInPictureParams();
+        if (params == null) {
+            return;
+        }
+        try {
+            setPictureInPictureParams(params);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            Log.w("PictureInPicture", "Unable to update PiP parameters", e);
+        }
+    }
+
+    private PictureInPictureParams buildPictureInPictureParams() {
+        if (Build.VERSION.SDK_INT < PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                || playerView == null) {
+            return null;
+        }
+        PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder();
+        RemoteAction playbackAction = buildPictureInPicturePlaybackAction();
+        if (playbackAction != null) {
+            builder.setActions(Arrays.asList(
+                    buildPictureInPicturePlaylistAction(false),
+                    playbackAction,
+                    buildPictureInPicturePlaylistAction(true)
+            ));
+        }
+        Format videoFormat = exoPlayer != null ? exoPlayer.getVideoFormat() : null;
+        View sourceView = playerView.getVideoSurfaceView();
+        int fallbackWidth = sourceView != null ? sourceView.getWidth() : playerView.getWidth();
+        int fallbackHeight = sourceView != null ? sourceView.getHeight() : playerView.getHeight();
+        int[] aspectRatio = PictureInPicturePolicy.resolveAspectRatio(
+                videoFormat != null && videoFormat.width > 0
+                        ? videoFormat.width : fallbackWidth,
+                videoFormat != null && videoFormat.height > 0
+                        ? videoFormat.height : fallbackHeight,
+                videoFormat != null ? videoFormat.rotationDegrees : 0,
+                videoFormat != null ? videoFormat.pixelWidthHeightRatio : 1f
+        );
+        try {
+            builder.setAspectRatio(new Rational(aspectRatio[0], aspectRatio[1]));
+        } catch (IllegalArgumentException ignored) {
+            // Android may impose a narrower device-specific ratio range. Its default PiP ratio is
+            // preferable to failing the entire transition.
+        }
+
+        Rect sourceRect = pictureInPictureSourceRect(sourceView != null ? sourceView : playerView);
+        if (sourceRect != null) {
+            builder.setSourceRectHint(sourceRect);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(shouldEnterPictureInPicture());
+            builder.setSeamlessResizeEnabled(true);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            builder.setTitle(resolveCurrentTitle());
+        }
+        return builder.build();
+    }
+
+    private void registerPictureInPictureActionReceiver() {
+        if (Build.VERSION.SDK_INT < PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                || pictureInPictureActionReceiverRegistered) {
+            return;
+        }
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ACTION_PIP_PLAY);
+        filter.addAction(ACTION_PIP_PAUSE);
+        filter.addAction(ACTION_PIP_PREVIOUS);
+        filter.addAction(ACTION_PIP_NEXT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(
+                    pictureInPictureActionReceiver,
+                    filter,
+                    Context.RECEIVER_NOT_EXPORTED
+            );
+        } else {
+            registerReceiver(pictureInPictureActionReceiver, filter);
+        }
+        pictureInPictureActionReceiverRegistered = true;
+    }
+
+    private RemoteAction buildPictureInPicturePlaybackAction() {
+        if (Build.VERSION.SDK_INT < PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                || exoPlayer == null) {
+            return null;
+        }
+        boolean playing = exoPlayer.getPlayWhenReady()
+                && exoPlayer.getPlaybackState() != Player.STATE_ENDED;
+        String action = playing ? ACTION_PIP_PAUSE : ACTION_PIP_PLAY;
+        int requestCode = playing ? REQUEST_PIP_PAUSE : REQUEST_PIP_PLAY;
+        int iconResource = playing ? R.drawable.ic_pip_pause : R.drawable.ic_pip_play;
+        String label = getString(playing ? R.string.pip_pause : R.string.pip_play);
+        Intent intent = new Intent(action).setPackage(getPackageName());
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                this,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        return new RemoteAction(
+                Icon.createWithResource(this, iconResource),
+                label,
+                label,
+                pendingIntent
+        );
+    }
+
+    private RemoteAction buildPictureInPicturePlaylistAction(boolean next) {
+        String action = next ? ACTION_PIP_NEXT : ACTION_PIP_PREVIOUS;
+        int requestCode = next ? REQUEST_PIP_NEXT : REQUEST_PIP_PREVIOUS;
+        int iconResource = next ? R.drawable.ic_pip_next : R.drawable.ic_pip_previous;
+        String label = getString(next ? R.string.pip_next_video : R.string.pip_previous_video);
+        Intent intent = new Intent(action).setPackage(getPackageName());
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                this,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        RemoteAction remoteAction = new RemoteAction(
+                Icon.createWithResource(this, iconResource),
+                label,
+                label,
+                pendingIntent
+        );
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            remoteAction.setEnabled(hasPictureInPicturePlaylistItem(next ? 1 : -1));
+        }
+        return remoteAction;
+    }
+
+    private int currentLogicalPlaylistIndex() {
+        if (exoPlayer == null) {
+            return -1;
+        }
+        if (progressivePlaybackActive) {
+            return progressiveOriginalIndex;
+        }
+        return exoPlayer.getCurrentMediaItemIndex();
+    }
+
+    private boolean hasPictureInPicturePlaylistItem(int direction) {
+        int currentIndex = currentLogicalPlaylistIndex();
+        int itemCount = progressivePlaybackActive && progressiveOriginalItems != null
+                ? progressiveOriginalItems.size()
+                : (exoPlayer != null ? exoPlayer.getMediaItemCount() : 0);
+        int targetIndex = currentIndex + direction;
+        return currentIndex >= 0 && targetIndex >= 0 && targetIndex < itemCount;
+    }
+
+    private void selectPictureInPicturePlaylistItem(int direction) {
+        if (exoPlayer == null || !hasPictureInPicturePlaylistItem(direction)) {
+            return;
+        }
+        saveCurrentPlaybackPosition();
+        int targetIndex = currentLogicalPlaylistIndex() + direction;
+        if (!progressivePlaybackActive) {
+            exoPlayer.seekTo(targetIndex, 0L);
+            return;
+        }
+        boolean playWhenReady = exoPlayer.getPlayWhenReady();
+        ArrayList<MediaItem> playlistItems = snapshotMediaItems();
+        clearProgressivePlaybackState();
+        compatibilityOriginalUri = null;
+        compatibilityVideoUri = null;
+        compatibilityPlaybackKey = null;
+        createPlayer(playlistItems, targetIndex, 0L, playWhenReady);
+    }
+
+    private Rect pictureInPictureSourceRect(View sourceView) {
+        if (sourceView == null || sourceView.getWidth() <= 0 || sourceView.getHeight() <= 0) {
+            return null;
+        }
+        int[] location = new int[2];
+        sourceView.getLocationInWindow(location);
+        int windowWidth = getWindow().getDecorView().getWidth();
+        int windowHeight = getWindow().getDecorView().getHeight();
+        int left = Math.max(0, location[0]);
+        int top = Math.max(0, location[1]);
+        int right = Math.min(windowWidth, location[0] + sourceView.getWidth());
+        int bottom = Math.min(windowHeight, location[1] + sourceView.getHeight());
+        return right > left && bottom > top ? new Rect(left, top, right, bottom) : null;
+    }
+
+    private void applyPictureInPictureUi(boolean inPictureInPictureMode) {
+        if (playerView == null) {
+            return;
+        }
+        if (inPictureInPictureMode) {
+            controlsWereVisibleBeforePictureInPicture = isControlsVisible;
+            uiHandler.removeCallbacks(hideControlsRunnable);
+            playerView.setPictureInPictureMode(true);
+            syncCustomControls(false);
+            brightnessOverlay.setVisibility(View.GONE);
+            volumeOverlay.setVisibility(View.GONE);
+        } else {
+            playerView.setPictureInPictureMode(false);
+            if (controlsWereVisibleBeforePictureInPicture && !playerView.isPlayerLocked()) {
+                showControls();
+            } else {
+                hideControls();
+            }
+        }
+    }
+
+    private void saveCurrentPlaybackPosition() {
+        if (exoPlayer == null || playbackKey == null) {
+            return;
+        }
+        PlaybackPrefs.getInstance(this).save(
+                playbackKey,
+                currentLogicalPlaybackPosition(),
+                currentLogicalDuration()
+        );
+    }
+
+    private void pausePlaybackOutsidePictureInPicture(boolean captureResumeState) {
+        if (exoPlayer == null) {
+            return;
+        }
+        saveCurrentPlaybackPosition();
+        if (captureResumeState) {
+            resumePlaybackAfterLifecyclePause = exoPlayer.getPlayWhenReady();
+        }
+        exoPlayer.setPlayWhenReady(false);
+        stopFirstFrameWatchdogTimer();
+    }
+
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (Build.VERSION.SDK_INT < PictureInPicturePolicy.MIN_SUPPORTED_SDK) {
+            return;
+        }
+        if (!shouldEnterPictureInPicture()) {
+            pictureInPictureTransitionPending = false;
+            return;
+        }
+        pictureInPictureTransitionPending = true;
+        PictureInPictureParams params = buildPictureInPictureParams();
+        if (params == null) {
+            pictureInPictureTransitionPending = false;
+            return;
+        }
+        try {
+            setPictureInPictureParams(params);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            pictureInPictureTransitionPending = false;
+            Log.w("PictureInPicture", "Unable to prepare PiP", e);
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            try {
+                pictureInPictureTransitionPending = enterPictureInPictureMode(params);
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                pictureInPictureTransitionPending = false;
+                Log.w("PictureInPicture", "Unable to enter PiP", e);
+            }
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(
+            boolean isInPictureInPictureMode,
+            Configuration newConfig
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        pictureInPictureMode = isInPictureInPictureMode;
+        pictureInPictureTransitionPending = false;
+        applyPictureInPictureUi(isInPictureInPictureMode);
+        if (!isInPictureInPictureMode) {
+            schedulePictureInPictureParamsUpdate();
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        schedulePictureInPictureParamsUpdate();
     }
 
     @Override
@@ -1755,31 +2144,72 @@ public class VideoPlayerActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        boolean preservePictureInPicturePlaybackState =
+                lifecyclePauseWasForPictureInPicture;
+        lifecyclePauseWasForPictureInPicture = false;
+        pictureInPictureTransitionPending = false;
+        suppressPictureInPictureForExplicitExit = false;
         if (exoPlayer != null) {
-            exoPlayer.setPlayWhenReady(true);
+            if (!preservePictureInPicturePlaybackState
+                    && resumePlaybackAfterLifecyclePause) {
+                exoPlayer.setPlayWhenReady(true);
+            }
             startSoftwareObservationIfNeeded();
             startFirstFrameWatchdogIfNeeded();
+            schedulePictureInPictureParamsUpdate();
         }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        if (exoPlayer != null) {
-            if (playbackKey != null) {
-                PlaybackPrefs.getInstance(this).save(
-                        playbackKey,
-                        currentLogicalPlaybackPosition(),
-                        currentLogicalDuration()
-                );
-            }
-            exoPlayer.setPlayWhenReady(false);
-            stopFirstFrameWatchdogTimer();
+        saveCurrentPlaybackPosition();
+        lifecyclePauseWasForPictureInPicture = pictureInPictureMode
+                || pictureInPictureTransitionPending
+                || shouldEnterPictureInPicture();
+        if (lifecyclePauseWasForPictureInPicture) {
+            pictureInPictureTransitionPending = true;
+        }
+        if (!lifecyclePauseWasForPictureInPicture) {
+            pausePlaybackOutsidePictureInPicture(true);
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (Build.VERSION.SDK_INT >= PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                && isInPictureInPictureMode()) {
+            // A visible PiP activity remains started. Reaching onStop while Android still reports
+            // PiP means the user dismissed the floating window; stop immediately so audio cannot
+            // continue from a hidden task on OEMs that defer destruction.
+            pictureInPictureTransitionPending = false;
+            pausePlaybackOutsidePictureInPicture(false);
+            releasePlayerOnly();
+            finish();
+            return;
+        }
+        if (pictureInPictureTransitionPending) {
+            uiHandler.postDelayed(() -> {
+                boolean entered = Build.VERSION.SDK_INT
+                        >= PictureInPicturePolicy.MIN_SUPPORTED_SDK
+                        && isInPictureInPictureMode();
+                if (!entered && !hasWindowFocus()) {
+                    pictureInPictureTransitionPending = false;
+                    pausePlaybackOutsidePictureInPicture(false);
+                }
+            }, 500L);
+        } else {
+            pausePlaybackOutsidePictureInPicture(false);
         }
     }
 
     @Override
     protected void onDestroy() {
+        if (pictureInPictureActionReceiverRegistered) {
+            unregisterReceiver(pictureInPictureActionReceiver);
+            pictureInPictureActionReceiverRegistered = false;
+        }
         if (compatibilityTranscodeSession != null) {
             compatibilityTranscodeSession.cancel();
             compatibilityTranscodeSession = null;
@@ -2428,6 +2858,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void showControls() {
+        if (pictureInPictureMode) {
+            return;
+        }
         playerView.showController();
         syncCustomControls(true);
         resetHideControlsTimer();
@@ -2479,7 +2912,9 @@ public class VideoPlayerActivity extends AppCompatActivity {
 
     private void resetHideControlsTimer() {
         uiHandler.removeCallbacks(hideControlsRunnable);
-        uiHandler.postDelayed(hideControlsRunnable, 3000);
+        if (!pictureInPictureMode) {
+            uiHandler.postDelayed(hideControlsRunnable, 3000);
+        }
     }
 
     private void hideSystemUI() {

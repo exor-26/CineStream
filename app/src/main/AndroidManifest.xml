@@ -27,9 +27,10 @@
 
         <activity
             android:name=".VideoPlayerActivity"
-            android:configChanges="orientation|screenSize|screenLayout"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
             android:exported="true"
             android:screenOrientation="sensor"
+            android:supportsPictureInPicture="true"
             android:theme="@style/PlayerFullScreenTheme"
             tools:ignore="DiscouragedApi">
             <intent-filter>

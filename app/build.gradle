@@ -19,8 +19,8 @@ android {
         minSdk 24
         //noinspection EditedTargetSdkVersion
         targetSdk 35
-        versionCode 91
-        versionName "9.5.1"
+        versionCode 92
+        versionName "9.6"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -113,6 +113,7 @@ dependencies {
     implementation "androidx.media3:media3-common:$media3_version"
     implementation "androidx.media3:media3-ui:$media3_version"
     implementation "androidx.media3:media3-inspector:$media3_version"
+    implementation "androidx.media3:media3-session:$media3_version"
     // Compatibility-copy fallback remains only for formats outside CineStream's native video set.
     implementation "androidx.media3:media3-transformer:$media3_version"
     implementation "androidx.media3:media3-effect:$media3_version"

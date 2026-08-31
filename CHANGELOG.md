@@ -2,6 +2,26 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.6 - 2026-08-31
+
+### Added
+
+- Android picture-in-picture for video that is actively playing when Home is pressed
+- High-contrast Previous video, Play/Pause, and Next video actions in the PiP window
+- Media3 session integration for system playback state and controls
+
+### Changed
+
+- A paused full-screen video remains in the app instead of opening an inactive PiP window
+- Expanding PiP preserves whether playback was playing or paused
+- The player window, shutter, and retained video frame stay black during PiP surface transitions
+
+### Fixed
+
+- Closing the PiP window no longer leaves hidden video or audio playback running
+- PiP controls remain visible against both light and dark video content
+- Expanding from PiP no longer exposes the app's light window background while the video surface resizes
+
 ## 9.5.1 - 2026-08-29
 
 ### Changed
