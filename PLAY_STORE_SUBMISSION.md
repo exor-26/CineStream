@@ -121,3 +121,4 @@ Enable Play App Signing and treat the existing CineStream key as the upload key.
 - Complete the content-rating questionnaire using the answers above.
 - Submit the Photo and Video Permissions declaration after the bundle is uploaded.
 - Start with Internal testing, review Play's automated pre-launch report, then promote when clean.
+- If the publisher is a personal developer account created after November 13, 2023, run the required closed test with at least 12 testers opted in continuously for 14 days, then apply for production access.
