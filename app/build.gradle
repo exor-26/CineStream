@@ -8,21 +8,33 @@ def cineFfmpegVersion = "8.1.2"
 def cineFfmpegRoot = file("${rootProject.projectDir}/.native/ffmpeg-${cineFfmpegVersion}")
 def cineFfmpegBuildScript = file("${rootProject.projectDir}/scripts/build_ffmpeg_android.sh")
 def cineFfmpegRootForCmake = cineFfmpegRoot.absolutePath.replace('\\', '/')
+def buildingPlayBundle = providers.gradleProperty("playBundle")
+        .map { it.toBoolean() }
+        .getOrElse(false)
 
 android {
     namespace 'com.example.cinestream'
-    compileSdk 35
+    compileSdk 36
     ndkVersion "26.1.10909125"
 
     defaultConfig {
         applicationId "com.example.cinestream"
         minSdk 24
         //noinspection EditedTargetSdkVersion
-        targetSdk 35
-        versionCode 92
-        versionName "9.6"
+        targetSdk 36
+        versionCode 93
+        versionName "9.6.1"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        if (buildingPlayBundle) {
+            // Keep the Play bundle limited to CineStream's supported Android ABIs. Without this
+            // bundle-level filter, native libraries contributed by AAR dependencies can
+            // reintroduce x86/x86_64 even though CineStream's own CMake target is ARM-only.
+            ndk {
+                abiFilters "arm64-v8a", "armeabi-v7a"
+            }
+        }
 
         externalNativeBuild {
             cmake {
@@ -42,7 +54,9 @@ android {
     }
     splits {
         abi {
-            enable true
+            // APK releases stay ABI-specific. A Play bundle carries both ABIs and lets Google
+            // deliver only the matching native library to each device.
+            enable !buildingPlayBundle
             reset()
             include "arm64-v8a", "armeabi-v7a"
             universalApk false

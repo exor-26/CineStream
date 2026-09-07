@@ -43,6 +43,8 @@ public final class GlassUi {
     private static final String ABOUT_DIALOG_TITLE = "About CineStream";
     private static final String CINESTREAM_REPOSITORY_URL =
             "https://github.com/exor-26/CineStream";
+    private static final String CINESTREAM_PRIVACY_POLICY_URL =
+            "https://github.com/exor-26/CineStream/blob/main/PRIVACY_POLICY.md";
     private static final String CINESTREAM_DEVELOPER_NAME = "Aditya Singh";
 
     public interface ConfirmCallback {
@@ -198,6 +200,7 @@ public final class GlassUi {
         TextView versionView = dialog.findViewById(R.id.about_version);
         TextView developerView = dialog.findViewById(R.id.about_developer_name);
         View repositoryView = dialog.findViewById(R.id.about_repository);
+        View privacyPolicyView = dialog.findViewById(R.id.about_privacy_policy);
         ScrollView scrollView = dialog.findViewById(R.id.about_scroll);
         View closeButton = dialog.findViewById(R.id.dialog_close);
 
@@ -208,6 +211,9 @@ public final class GlassUi {
         repositoryView.setContentDescription("View CineStream source code on GitHub");
         repositoryView.setOnClickListener(v ->
                 openExternalUri(context, CINESTREAM_REPOSITORY_URL));
+        privacyPolicyView.setContentDescription("View CineStream privacy policy");
+        privacyPolicyView.setOnClickListener(v ->
+                openExternalUri(context, CINESTREAM_PRIVACY_POLICY_URL));
         closeButton.setOnClickListener(v -> dialog.dismiss());
         scrollView.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         dialog.show();

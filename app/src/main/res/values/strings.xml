@@ -44,6 +44,7 @@
     <string name="about_developer_title">Developer</string>
     <string name="about_developer_role">Creator and maintainer of CineStream</string>
     <string name="about_github_action">View CineStream on GitHub</string>
+    <string name="about_privacy_policy_action">Privacy policy</string>
     <string name="fullscreen_exit_hint">Swipe again to leave full screen</string>
     <string name="selection_rename">Rename selected video</string>
     <string name="selection_share">Share selected videos</string>

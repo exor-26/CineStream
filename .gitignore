@@ -16,3 +16,5 @@
 /.native/
 local.properties
 cinestream-*.xml
+/playstore/release/*.aab
+/playstore/release/*.apks

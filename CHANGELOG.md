@@ -2,6 +2,16 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.6.1 - 2026-09-07
+
+### Changed
+
+- Updated compile and target SDK to Android 16/API 36 for current Google Play submission requirements
+- Updated Android Gradle Plugin and Gradle wrapper to versions with official API 36 support
+- Scoped legacy storage permission to Android 12L/API 32 and earlier
+- Added a direct in-app link to CineStream's public privacy policy
+- Added Play Store submission copy, declarations, and production artwork guidance
+
 ## 9.6 - 2026-08-31
 
 ### Added

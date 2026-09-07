@@ -104,8 +104,9 @@ CineStream uses:
 ## Build requirements
 
 - Android Studio with bundled JBR
-- JDK 21 through Android Studio JBR as configured in `gradle.properties`
-- Android SDK with `compileSdk 35`
+- JDK 17 or newer (Android Studio's bundled JBR is supported)
+- Android Gradle Plugin `8.9.1` with Gradle `8.11.1`
+- Android SDK with `compileSdk 36`
 - Android NDK `26.1.10909125`
 - CMake `3.22.1`
 
@@ -113,6 +114,12 @@ CineStream uses:
 
 ```powershell
 .\gradlew.bat testDebugUnitTest assembleRelease
+```
+
+For the Google Play Android App Bundle:
+
+```powershell
+.\gradlew.bat testDebugUnitTest bundleRelease -PplayBundle=true
 ```
 
 Release builds are split by ABI:
@@ -149,8 +156,8 @@ The APKs are split by ABI to keep the installed download compact. CineStream doe
 
 ## Current version
 
-- `versionName`: `9.6`
-- `versionCode`: `92`
+- `versionName`: `9.6.1`
+- `versionCode`: `93`
 
 ## Release packaging
 
@@ -160,6 +167,8 @@ Release builds use split APKs:
 - `armeabi-v7a` for supported 32-bit Android hardware
 
 Version 9.6 adds lifecycle-safe picture-in-picture for actively playing videos. Home continues playback in the floating window, explicit Back exits normally, expanding preserves Play/Pause state, and closing PiP stops and releases playback. High-contrast Previous, Play/Pause, and Next actions remain usable across light and dark system themes. The hardware-first, OEM-independent recovery architecture remains unchanged.
+
+Version 9.6.1 targets Android 16/API 36 for Google Play submission and exposes the public privacy policy from the in-app About surface. Google Play receives one Android App Bundle and generates reduced, ABI-specific downloads for each device.
 
 ## Roadmap ideas
 
