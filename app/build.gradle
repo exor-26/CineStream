@@ -13,17 +13,17 @@ def buildingPlayBundle = providers.gradleProperty("playBundle")
         .getOrElse(false)
 
 android {
-    namespace 'com.example.cinestream'
+    namespace 'com.exor.cinestream'
     compileSdk 36
     ndkVersion "26.1.10909125"
 
     defaultConfig {
-        applicationId "com.example.cinestream"
+        applicationId "com.exor.cinestream"
         minSdk 24
         //noinspection EditedTargetSdkVersion
         targetSdk 36
-        versionCode 93
-        versionName "9.6.1"
+        versionCode 94
+        versionName "9.6.2"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 

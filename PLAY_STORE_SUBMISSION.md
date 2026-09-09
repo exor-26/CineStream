@@ -1,14 +1,14 @@
 # CineStream Google Play Submission
 
-Prepared for version **9.6.1** (`versionCode 93`) on September 7, 2026.
+Prepared for version **9.6.2** (`versionCode 94`) on September 9, 2026.
 
 ## App identity
 
-- App name: `CineStream`
+- App name: `CineStream Local Video Player`
 - Default language: `English (United States) — en-US`
 - App or game: `App`
 - Free or paid: `Free`
-- Package name: `com.example.cinestream`
+- Package name: `com.exor.cinestream`
 - Category: `Video Players & Editors`
 - Developer name: `Aditya Singh`
 - Support email: `adityakumar3575@gmail.com`
@@ -45,11 +45,11 @@ Your videos stay on your device. CineStream performs playback and compatibility 
 
 ### Release name
 
-9.6.1 - Google Play launch
+9.6.2 - Google Play launch
 
 ### Release notes
 
-Initial Google Play release with hardware-first local playback, on-device codec recovery, audio and subtitle tracks, gesture controls, playback resume, and lifecycle-safe picture-in-picture. Targets Android 16/API 36 and includes a public in-app privacy policy link.
+Google Play launch under the production package `com.exor.cinestream`. Includes hardware-first local playback, on-device codec recovery, audio and subtitle tracks, gesture controls, playback resume, lifecycle-safe picture-in-picture, and a fix for videos stored directly under Internal storage. Targets Android 16/API 36 and includes a public in-app privacy policy link.
 
 ## App content declarations
 
@@ -98,19 +98,19 @@ If Play Console requests a demonstration video for the broad-media declaration, 
 
 ## Release artifact
 
-Upload `playstore/release/CineStream-9.6.1-play.aab` to Play Console. The bundle includes both supported native ABIs. Google Play generates a reduced device-specific APK, so arm64 devices receive only the arm64-v8a native library rather than the 32-bit library.
+Upload `playstore/release/CineStream-9.6.2-play.aab` to a new Play Console app created for `com.exor.cinestream`. Do not upload it to the previous Play Console app record. The bundle includes both supported native ABIs. Google Play generates a reduced device-specific APK, so arm64 devices receive only the arm64-v8a native library rather than the 32-bit library.
 
-- Signed AAB size: `19,407,771 bytes` (18.51 MiB)
-- SHA-256: `0B8932F5A6FA88815F6760DA942C8580D948F595D3F99E42193872684329A03F`
+- Signed AAB size: `19,407,616 bytes` (18.51 MiB)
+- SHA-256: `63255D2FC5074DEC834FBF22EE76858EBB3EEC927184393940701B62A944EB5A`
 - Simulated Android 16 arm64 delivery: `15,383,201 bytes` across generated configuration APKs
 - Bundle contents: `arm64-v8a` and `armeabi-v7a` only; no x86 payload
-- Manifest: min SDK 24, target SDK 36, version code 93
+- Manifest: min SDK 24, target SDK 36, version code 94
 - Native compatibility: every arm64 shared library uses 16 KiB ELF LOAD alignment
 - Bundle validation and signature verification: passed
 
 Rebuild it with `.\gradlew.bat testDebugUnitTest bundleRelease -PplayBundle=true`. The property disables APK-output splitting only for the bundle task; normal release APK builds remain ABI-specific.
 
-Enable Play App Signing and treat the existing CineStream key as the upload key. Never upload the keystore or passwords to Play Console fields, source control, support tickets, or the store listing.
+Enable Play App Signing for the new app and enroll the first bundle's CineStream certificate (`SHA1: 65:F6:4C:32:53:06:35:FD:31:9B:93:2B:F9:AC:2A:31:5A:7C:FF:E5`) as its upload key. Never upload the keystore or passwords to Play Console fields, source control, support tickets, or the store listing.
 
 ## Remaining manual Play Console items
 

@@ -21,8 +21,8 @@
 #-renamesourcefileattribute SourceFile
 
 # Preserve app activities referenced by the manifest and intent routing.
--keep class com.example.cinestream.** extends android.app.Activity { *; }
--keep class com.example.cinestream.** extends androidx.appcompat.app.AppCompatActivity { *; }
+-keep class com.exor.cinestream.** extends android.app.Activity { *; }
+-keep class com.exor.cinestream.** extends androidx.appcompat.app.AppCompatActivity { *; }
 
 # Media3 loads native video extension renderers by reflection. Keep the concrete classes
 # so R8 cannot remove or rename the fallback entry points in release builds.
@@ -30,7 +30,7 @@
 -keep class androidx.media3.decoder.vp9.LibvpxVideoRenderer { *; }
 
 # CineStream's FFmpeg video bridge uses JNI method names and VideoDecoderOutputBuffer fields.
--keep class com.example.cinestream.ffmpeg.** { *; }
+-keep class com.exor.cinestream.ffmpeg.** { *; }
 -keep class androidx.media3.decoder.VideoDecoderOutputBuffer { *; }
 
 # Media3 Transformer keeps newer framework types (including Android 12 media metrics)

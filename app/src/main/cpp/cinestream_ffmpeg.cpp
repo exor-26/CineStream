@@ -1238,7 +1238,7 @@ void releaseContext(DecoderContext* context) {
 }  // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegLibrary_nativeIsUsable(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegLibrary_nativeIsUsable(
         JNIEnv*,
         jclass
 ) {
@@ -1246,7 +1246,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegLibrary_nativeIsUsable(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegLibrary_nativeHasDecoder(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegLibrary_nativeHasDecoder(
         JNIEnv* env,
         jclass,
         jstring codecName
@@ -1258,7 +1258,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegLibrary_nativeHasDecoder(
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegLibrary_nativeGetVersion(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegLibrary_nativeGetVersion(
         JNIEnv* env,
         jclass
 ) {
@@ -1266,7 +1266,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegLibrary_nativeGetVersion(
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
         JNIEnv* env,
         jclass,
         jstring codecName,
@@ -1369,7 +1369,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeInitialize(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeDecodePacket(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeDecodePacket(
         JNIEnv* env,
         jclass,
         jlong nativeContext,
@@ -1502,7 +1502,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeDecodePacket(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeSendEndOfStream(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeSendEndOfStream(
         JNIEnv*,
         jclass,
         jlong nativeContext
@@ -1534,7 +1534,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeSendEndOfStream(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeFlush(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeFlush(
         JNIEnv*,
         jclass,
         jlong nativeContext
@@ -1549,7 +1549,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeFlush(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeRenderFrame(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeRenderFrame(
         JNIEnv* env,
         jclass,
         jlong nativeContext,
@@ -1581,7 +1581,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeRenderFrame(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeReleaseFrame(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeReleaseFrame(
         JNIEnv*,
         jclass,
         jlong nativeContext,
@@ -1595,7 +1595,7 @@ Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeReleaseFrame(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeRelease(
+Java_com_exor_cinestream_ffmpeg_CineFfmpegVideoDecoder_nativeRelease(
         JNIEnv*,
         jclass,
         jlong nativeContext

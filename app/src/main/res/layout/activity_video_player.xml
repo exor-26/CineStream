@@ -9,7 +9,7 @@
 
     <!-- UnifiedPlayerView owns surface-gesture arbitration plus zoom/seek presentation. The
          activity remains responsible for playback, brightness, volume, audio and compatibility. -->
-    <com.example.cinestream.UnifiedPlayerView
+    <com.exor.cinestream.UnifiedPlayerView
         android:id="@+id/player_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"

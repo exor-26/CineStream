@@ -2,6 +2,17 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.6.2 - 2026-09-09
+
+### Changed
+
+- Migrated the Android application ID and Java/JNI namespace to `com.exor.cinestream`
+- Updated the Play listing title to `CineStream Local Video Player`
+
+### Fixed
+
+- Files stored directly at the shared-storage root now appear under `Internal storage` instead of a blank folder name
+
 ## 9.6.1 - 2026-09-07
 
 ### Changed

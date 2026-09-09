@@ -4,7 +4,7 @@
     "type": "APK",
     "kind": "Directory"
   },
-  "applicationId": "com.example.cinestream",
+  "applicationId": "com.exor.cinestream",
   "variantName": "release",
   "elements": [
     {
@@ -16,8 +16,8 @@
         }
       ],
       "attributes": [],
-      "versionCode": 87,
-      "versionName": "9.2",
+      "versionCode": 94,
+      "versionName": "9.6.2",
       "outputFile": "app-armeabi-v7a-release.apk"
     },
     {
@@ -29,8 +29,8 @@
         }
       ],
       "attributes": [],
-      "versionCode": 87,
-      "versionName": "9.2",
+      "versionCode": 94,
+      "versionName": "9.6.2",
       "outputFile": "app-arm64-v8a-release.apk"
     }
   ],
