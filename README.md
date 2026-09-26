@@ -1,6 +1,12 @@
 # CineStream
 
-CineStream is a local Android video player focused on fast on-device browsing, broad codec recovery, and modern Android storage compatibility. It scans the device library through `MediaStore`, remembers playback progress, and uses Media3 with CineStream's bundled FFmpeg decoder—never VLC or LibVLC.
+**A free, open-source Android player for videos on your device.**
+
+CineStream brings local videos into a searchable MediaStore library, remembers playback progress, and uses Media3 hardware playback with an on-device FFmpeg recovery path for difficult files.
+
+[Google Play](https://play.google.com/store/apps/details?id=com.exor.cinestream) · [APK releases](https://github.com/exor-26/CineStream/releases) · [Playback architecture](#video-compatibility-flow) · [Build from source](#build)
+
+An independent product by [Aditya Kumar](https://exor-portfolio.netlify.app/), covering product direction, Android architecture, playback integration, and release delivery.
 
 ## Highlights
 
