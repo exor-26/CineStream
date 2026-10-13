@@ -35,4 +35,4 @@ The earlier 9.7.0 arm64 APK was installed/launched for the owner's manual test.
 
 GitHub delivery is not Google Play submission or approval. The Play operator must compare
 the active Upload key certificate, ensure code 96 is higher than every used code, and review
-the Console results/declarations. Follow the [handover](../playstore/updates/9.7.0/HANDOVER.md).
+the Console results/declarations. Follow the [handover](https://github.com/exor-26/CineStream/blob/main/playstore/updates/9.7.0/HANDOVER.md).

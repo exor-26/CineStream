@@ -1,0 +1,1 @@
+Video access is clearer: Android asks on first launch, with an explanation and Allow access if you deny. Open settings is offered when needed. On Android 14+, manage the videos you allow. Library actions now include Rename, Share, Info, and Delete labels. Existing playback, audio, subtitles, and picture-in-picture remain available.
