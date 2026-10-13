@@ -1,8 +1,8 @@
 # CineStream Google Play Submission
 
-Current local target: **9.7.0** (`versionCode 96`). It is not published. Screen adaptation is mapped in [docs/SCREEN_ADAPTATION.md](docs/SCREEN_ADAPTATION.md). A new signed bundle and current screenshots must be prepared before handing over this version; do not rename or upload an old 9.6.3 bundle as 9.7.0.
+Prepared for **9.7.0** (`versionCode 96`) on October 13, 2026, for the existing `com.exor.cinestream` listing. Send `playstore/updates/CineStream-9.7.0-Play-Update.zip` and follow [the handover](playstore/updates/9.7.0/HANDOVER.md). GitHub delivery is separate from Play submission/approval.
 
-The following submission package is the historical **9.6.3** (`versionCode 95`) preparation from October 3, 2026, for the existing `com.exor.cinestream` listing. Its filenames, signatures, artwork, and verification records intentionally retain their original version.
+Screen adaptation is mapped in [docs/SCREEN_ADAPTATION.md](docs/SCREEN_ADAPTATION.md). Older 9.6.3 bundles and artwork remain historical files; do not relabel an old bundle as 9.7.0.
 
 ## App identity
 
@@ -47,11 +47,11 @@ Your videos stay on your device. CineStream performs playback and compatibility 
 
 ### Release name
 
-9.6.3 - Clearer video access and library actions
+9.7.0 - Glass player controls and adaptive layouts
 
 ### Release notes
 
-Video access is clearer: Android asks on first launch, with an explanation and Allow access if you deny. Open settings is offered when needed. On Android 14+, manage the videos you allow. Library actions now include Rename, Share, Info, and Delete labels. Existing playback, audio, subtitles, and picture-in-picture remain available.
+Use `playstore/updates/9.7.0/whats-new-en-US.txt`: new glass player controls, Settings with Speed/Lock, consistent gesture feedback, pinch percentage, phone/tablet window sizing, and metadata/thumbnail improvements.
 
 ## App content declarations
 
@@ -93,19 +93,19 @@ If Play Console requests a demonstration video for the broad-media declaration, 
 
 ## Graphic assets
 
-- Play icon: `playstore/updates/9.6.3/graphics/play-icon-512x512.png` — 512 x 512 PNG.
-- Feature graphic: `playstore/updates/9.6.3/graphics/feature-graphic-1024x500.png` — 1024 x 500 PNG.
-- Updated phone screenshots: `playstore/updates/9.6.3/screenshots/01-library.png`, `02-tracks.png`, `03-controls.png`, and `04-privacy.png`. These use real app screens inside presentation artwork. Upload them separately to the listing, in this order, after reviewing their previews.
+- Play icon: `playstore/updates/9.7.0/graphics/play-icon-512x512.png` — existing 512 x 512 PNG.
+- Feature graphic: `playstore/updates/9.7.0/graphics/feature-graphic-1024x500.png` — existing 1024 x 500 PNG.
+- Phone screenshots: `playstore/updates/9.7.0/screenshots/01-library.png`, `02-tracks.png`, `03-controls.png`, and `04-privacy.png`. The owner-supplied Explorer.png and Player.png replace 01 and 03; 02 and 04 stay unchanged. No visual review was performed. Upload separately, in order, and check previews in Console.
 - Screenshot format: JPEG or 24-bit PNG without alpha, each side 320-3840 px, and no side more than twice the other side.
 - Preview video: optional. Do not upload copyrighted sample-video footage.
 
 ## Release artifact
 
-Upload `playstore/updates/9.6.3/CineStream-9.6.3-play.aab` as an update to the existing Play Console app whose package is `com.exor.cinestream`. The package must match that app record. Confirm version code 95 is higher than every version code already uploaded for this app. Google Play generates device-specific APKs from the bundle; phone screenshots are separate listing assets and are not embedded in the AAB.
+Upload `playstore/updates/9.7.0/CineStream-9.7.0-play.aab` to the existing app `com.exor.cinestream`. Confirm version code 96 is higher than every version already used. Google Play generates device-specific APKs; phone screenshots upload separately and are not embedded in the AAB.
 
 - Package: `com.exor.cinestream`
-- Version: `9.6.3` / `95`
-- Release files, certificate details, and handover steps: `playstore/updates/9.6.3/HANDOVER.md`
+- Version: `9.7.0` / `96`
+- Release files, certificate details, and handover steps: `playstore/updates/9.7.0/HANDOVER.md`
 - Exact release sizes and hashes: accompanying `SHA256SUMS.txt` in the handover package
 - This release preparation does not include new physical-device tests; the user handles manual checks.
 
@@ -117,7 +117,7 @@ Confirm the **Upload key certificate** shown under Play app signing matches the 
 
 - Complete developer identity and package-name verification if Play Console requests it.
 - Confirm the existing app's active upload certificate and available version code.
-- Replace the phone screenshot set with the reviewed 9.6.3 artwork; retain the existing icon and feature graphic unless deliberately changing them.
+- Replace phone screenshots with the provided 9.7.0 set; the owner/operator must visually review it. Keep the existing icon and feature graphic.
 - Confirm distribution countries/regions and whether the app will be free.
 - Complete the content-rating questionnaire using the answers above.
 - Submit the Photo and Video Permissions declaration after the bundle is uploaded.

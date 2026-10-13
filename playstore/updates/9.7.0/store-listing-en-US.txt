@@ -1,0 +1,41 @@
+APP NAME
+CineStream Local Video Player
+
+SHORT DESCRIPTION
+Private local video playback with broad codec recovery and smooth controls.
+
+FULL DESCRIPTION
+CineStream is a local video player built around your device library.
+
+Browse videos stored on your device, search by title, switch between video and folder views, sort your library, and resume from where you stopped. Select one or multiple videos with clearly labeled Rename, Share, Info, and Delete actions.
+
+Android asks for video access on first launch. If you deny permission, CineStream explains why it is needed and provides an Allow access button. When Android requires a settings change, Open settings takes you there. On Android 14 and newer, selected-video access and Manage access let you choose which videos appear.
+
+The dark glass player keeps playback controls clear. Use Settings for Speed and Lock, with a bottom-center swipe to unlock. Pinch zoom shows its percentage; crop, seek, brightness, volume boost and temporary 2x speed have consistent feedback. Controls adapt to the current phone or tablet window, orientation and available space.
+
+Choose available audio tracks and subtitles, and continue active playback in Android picture-in-picture with previous-video, play/pause and next-video controls.
+
+CineStream starts with Android hardware playback. For challenging media, it can use its bundled on-device software decoder and governed H.264 compatibility recovery. Playback capability depends on the source and the device's available resources; no player can guarantee all media will run smoothly on every device.
+
+FEATURES
+- Local video and folder library
+- Search, sorting, cached thumbnails and playback resume
+- Labeled selection actions and multiple-video sharing
+- Hardware-first playback with on-device codec recovery
+- Available audio-track and subtitle selection
+- Picture-in-picture with playlist controls
+- Pinch zoom, crop, seek, brightness and volume gestures
+- Glass controls with window-based phone/tablet sizing
+- No account, advertising, analytics or tracking
+- No internet permission
+
+Your videos stay on your device. CineStream processes media locally. Sharing happens only when you choose Share and a recipient through Android's system sharing interface.
+
+SUPPORT
+adityakumar3575@gmail.com
+
+PRIVACY POLICY
+https://github.com/exor-26/CineStream/blob/main/PRIVACY_POLICY.md
+
+WEBSITE
+https://github.com/exor-26/CineStream

@@ -198,6 +198,11 @@ widths. The media surface, original audio system, and decoder pipeline are prese
 controller and screen-sizing changes. Previous release bundles and their artwork remain
 historical artifacts; they must not be relabeled as 9.7.0.
 
+The current Google Play operator package is documented in
+[playstore/updates/9.7.0/HANDOVER.md](playstore/updates/9.7.0/HANDOVER.md).
+Its signed AAB and listing images are separate upload inputs. The owner's new Explorer and
+Player artwork replaces the corresponding screenshots; visual review is left to the owner/operator.
+
 ## Roadmap ideas
 
 - add instrumentation coverage for library and player entry flows

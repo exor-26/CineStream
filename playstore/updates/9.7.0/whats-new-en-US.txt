@@ -1,0 +1,1 @@
+New themed glass player controls with animated Play/Pause, a separate seekbar and compact time display. Settings now includes Speed and Lock, with swipe-to-unlock. Gesture feedback stays consistent and pinch zoom shows its percentage. Better sizing for phones, tablets, landscape and large text. Improved metadata and cached thumbnails for supported local files.
