@@ -220,7 +220,8 @@ final class CompatibilityVideoTranscoder {
                     context,
                     fallbackDecoderFactory,
                     Clock.DEFAULT,
-                    null
+                    CineMediaSources.factory(context),
+                    new androidx.media3.datasource.DataSourceBitmapLoader(context)
             );
 
             Transformer transformer = new Transformer.Builder(context)

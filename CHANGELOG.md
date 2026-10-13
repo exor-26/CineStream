@@ -2,6 +2,42 @@
 
 All notable changes to this project should be documented in this file.
 
+## 9.7.0 - 2026-10-13
+
+### Changed
+
+- Themed dark glass player controls with a native-state-driven play/pause morph
+- Separate seekbar glass, compact time pill, and Settings button
+- Settings contains Speed and Lock, with the existing Media3 speed picker
+- All seven gesture-feedback types hide the entire controller and keep a stable upper position
+- Live pinch-zoom percentage and the existing bottom-center swipe-to-unlock slider
+- Window-based sizing for narrow phones, short landscape windows, and tablets; 48dp minimum button targets
+- Complete timestamps stack instead of overlapping Settings at large text sizes
+- Bounded tablet dock and dialog widths; resizing remeasures controls without restarting playback
+- Version name 9.7.0 and version code 96; prior release artifacts are preserved
+
+### Verification boundary
+
+- Screen mapping and local geometry/layout tests are documented in `docs/SCREEN_ADAPTATION.md`
+- These checks are not a claim of physical validation on every phone, tablet, or foldable
+- GitHub release delivery is separate from the operator's Google Play submission and approval
+
+## 9.6.3 - 2026-10-03
+
+### Changed
+
+- Android's native video-access permission dialog opens automatically on first launch without permission
+- Permission denial replaces the empty explorer with an explanation and an Allow access action
+- Open settings is offered when Android no longer permits another permission prompt
+- Android 14+ selected-video access displays permitted videos with a Manage access action
+- Library selection actions now display Rename, Share, Info, and Delete labels beneath their icons
+- Prepared refreshed Play listing artwork, release notes, and an update handover for the existing `com.exor.cinestream` listing
+
+### Preserved
+
+- Rename and Info remain single-selection actions; Share and Delete retain multi-selection support
+- Existing audio, subtitle, playback, and compatibility behavior
+
 ## 9.6.2 - 2026-09-09
 
 ### Changed

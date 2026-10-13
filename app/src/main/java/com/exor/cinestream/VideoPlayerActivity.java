@@ -21,9 +21,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.util.Log;
 import android.util.Rational;
 import android.view.GestureDetector;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -38,6 +40,7 @@ import android.widget.TextView;
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.OptIn;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -103,10 +106,10 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private DefaultTrackSelector trackSelector;
     private MediaSession mediaSession;
     private UnifiedPlayerView playerView;
+    private PlayerControlsCoordinator controlsCoordinator;
     private ImageButton rotateButton;
     private ImageButton cropButton;
     private ImageButton audioTrackButton;
-    private ImageButton screenLockButton;
 
     private LinearLayout brightnessOverlay;
     private ProgressBar brightnessProgressBar;
@@ -183,10 +186,13 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private float maxVolume;
     private float currentVolume;
     private float currentBrightness;
+    private float brightnessBeforePlayback = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+    private boolean brightnessAdjusted;
+    private final PlaybackAdjustmentState playbackAdjustments = new PlaybackAdjustmentState();
     private float volumeBoostPercent = 100f;
     private LoudnessEnhancer loudnessEnhancer;
-    private final Runnable hideBrightnessOverlayRunnable = () -> brightnessOverlay.setVisibility(View.GONE);
-    private final Runnable hideVolumeOverlayRunnable = () -> volumeOverlay.setVisibility(View.GONE);
+    private final Runnable hideBrightnessOverlayRunnable = () -> hideAdjustmentOverlay(brightnessOverlay);
+    private final Runnable hideVolumeOverlayRunnable = () -> hideAdjustmentOverlay(volumeOverlay);
     private final Runnable pictureInPictureParamsRunnable = this::updatePictureInPictureParams;
     private final BroadcastReceiver pictureInPictureActionReceiver = new BroadcastReceiver() {
         @Override
@@ -396,6 +402,14 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }, 250L);
     }
 
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        // Apply night resources to this activity's context before any views/dialogs are inflated.
+        // Never change the application's default mode or the explorer's resources.
+        getDelegate().setLocalNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+        super.attachBaseContext(newBase);
+    }
+
     @OptIn(markerClass = UnstableApi.class)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -410,31 +424,13 @@ public class VideoPlayerActivity extends AppCompatActivity {
         rotateButton = findViewById(R.id.btn_rotate);
         cropButton = findViewById(R.id.btn_crop);
         audioTrackButton = findViewById(R.id.audio_track);
-        screenLockButton = findViewById(R.id.btn_screen_lock);
+        controlsCoordinator = new PlayerControlsCoordinator(playerView, this::syncCustomControls);
+        playerView.setControlsCoordinator(controlsCoordinator);
 
         brightnessOverlay = findViewById(R.id.brightness_overlay_container);
         brightnessProgressBar = findViewById(R.id.brightness_progress);
         brightnessIcon = findViewById(R.id.brightness_icon);
         volumeOverlay = findViewById(R.id.overlay_container);
-
-        getWindow().getDecorView().post(() -> {
-            int screenHeight = getWindow().getDecorView().getHeight();
-            int targetMargin = screenHeight / 4;
-
-            androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams volLp =
-                    (androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)
-                            volumeOverlay.getLayoutParams();
-            volLp.gravity = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
-            volLp.topMargin = targetMargin;
-            volumeOverlay.setLayoutParams(volLp);
-
-            androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams briLp =
-                    (androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)
-                            brightnessOverlay.getLayoutParams();
-            briLp.gravity = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
-            briLp.topMargin = targetMargin;
-            brightnessOverlay.setLayoutParams(briLp);
-        });
 
         volumeProgressBar = findViewById(R.id.volume_progress);
         volumeBoostProgressBar = findViewById(R.id.volume_boost_progress);
@@ -455,39 +451,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
             }
         });
 
-        final View topBar = findViewById(R.id.top_bar);
-        ViewCompat.setOnApplyWindowInsetsListener(topBar, (v, insets) -> {
-            int sidePad = (int) (8 * getResources().getDisplayMetrics().density);
-            int sidePadLandscape = (int) (24 * getResources().getDisplayMetrics().density);
-
-            boolean isLandscape = getResources().getConfiguration().orientation
-                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
-
-            if (isLandscape) {
-                int topPad = (int) (12 * getResources().getDisplayMetrics().density);
-                v.setPadding(sidePadLandscape, topPad, sidePadLandscape, 0);
-                return insets;
-            }
-
-            int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
-            if (statusBarHeight > 0) {
-                topBar.setTag(statusBarHeight);
-                v.setPadding(sidePad, statusBarHeight, sidePad, 0);
-            } else {
-                Object saved = topBar.getTag();
-                if (saved instanceof Integer) {
-                    v.setPadding(sidePad, (Integer) saved, sidePad, 0);
-                } else {
-                    int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
-                    int h = id > 0 ? getResources().getDimensionPixelSize(id) : 0;
-                    v.setPadding(sidePad, h, sidePad, 0);
-                }
-            }
-            return insets;
-        });
-        topBar.requestApplyInsets();
-        installScreenLockSafeInsets();
-
         videoUri = resolveVideoUri();
         if (videoUri == null) {
             Log.e("VideoError", "Invalid video URI");
@@ -501,15 +464,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         playlistTitles = getIntent().getStringArrayListExtra(EXTRA_PLAYLIST_TITLES);
         tvVideoName.setText(resolveDisplayTitle(videoUri));
 
-        playerView.setControllerVisibilityListener(
-                (PlayerView.ControllerVisibilityListener) visibility -> {
-                    if (visibility == View.VISIBLE) {
-                        syncCustomControls(true);
-                    } else {
-                        syncCustomControls(false);
-                    }
-                }
-        );
         playerView.setOnPlayerUnlockedListener(this::showControls);
 
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
@@ -523,12 +477,12 @@ public class VideoPlayerActivity extends AppCompatActivity {
         long savedPosition = PlaybackPrefs.getInstance(this).getPosition(playbackKey);
         createPlayer(playlistItems, startIndex, savedPosition, true);
 
-        currentBrightness = getWindow().getAttributes().screenBrightness;
+        brightnessBeforePlayback = getWindow().getAttributes().screenBrightness;
+        currentBrightness = readCurrentBrightness();
 
         setupRotationButton();
         setupAudioTrackButton();
         setupCropButton();
-        setupScreenLockButton();
         setupGestureDetection();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -537,7 +491,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
         setupInteractionListeners();
         hideSystemUI();
-        resetHideControlsTimer();
+        showControls();
         if (Build.VERSION.SDK_INT >= PictureInPicturePolicy.MIN_SUPPORTED_SDK
                 && isInPictureInPictureMode()) {
             pictureInPictureMode = true;
@@ -565,6 +519,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                         governedSoftwareVideoActive
                 )
         )
+                .setMediaSourceFactory(CineMediaSources.factory(this))
                 .setTrackSelector(trackSelector)
                 .build();
 
@@ -632,7 +587,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         playbackKey = logicalPlaybackKey;
 
         initializePlayerShell();
-        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this);
+        DefaultMediaSourceFactory sourceFactory = CineMediaSources.factory(this);
         ArrayList<MediaSource> sources = new ArrayList<>();
         int safeIndex = Math.max(0, Math.min(startIndex, mediaItems.size() - 1));
         for (int i = 0; i < mediaItems.size(); i++) {
@@ -1450,7 +1405,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         playbackKey = logicalPlaybackKey;
 
         initializePlayerShell();
-        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this);
+        DefaultMediaSourceFactory sourceFactory = CineMediaSources.factory(this);
         ConcatenatingMediaSource sequence = new ConcatenatingMediaSource();
         for (int i = 0; i < safeOriginalIndex; i++) {
             sequence.addMediaSource(sourceFactory.createMediaSource(mediaItems.get(i)));
@@ -1551,7 +1506,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
         MediaItem originalItem = progressiveOriginalItems.get(progressiveOriginalIndex);
         MediaSource mediaSource = buildProgressiveSegmentMediaSource(
-                new DefaultMediaSourceFactory(this),
+                CineMediaSources.factory(this),
                 originalItem,
                 originalUri,
                 logicalPlaybackKey,
@@ -1577,7 +1532,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 || progressiveOriginalItems == null) {
             return;
         }
-        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this);
+        DefaultMediaSourceFactory sourceFactory = CineMediaSources.factory(this);
         boolean hasTrailingItems = progressiveOriginalIndex + 1 < progressiveOriginalItems.size();
         boolean resumeFromCompletedVideo = hasTrailingItems
                 && exoPlayer != null
@@ -2040,7 +1995,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
         if (inPictureInPictureMode) {
             controlsWereVisibleBeforePictureInPicture = isControlsVisible;
-            uiHandler.removeCallbacks(hideControlsRunnable);
             playerView.setPictureInPictureMode(true);
             syncCustomControls(false);
             brightnessOverlay.setVisibility(View.GONE);
@@ -2144,6 +2098,14 @@ public class VideoPlayerActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (brightnessAdjusted) {
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.screenBrightness = currentBrightness;
+            getWindow().setAttributes(attributes);
+        }
+        if (audioManager != null) {
+            currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        }
         boolean preservePictureInPicturePlaybackState =
                 lifecyclePauseWasForPictureInPicture;
         lifecyclePauseWasForPictureInPicture = false;
@@ -2186,6 +2148,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
             pictureInPictureTransitionPending = false;
             pausePlaybackOutsidePictureInPicture(false);
             releasePlayerOnly();
+            restorePlaybackAdjustments();
             finish();
             return;
         }
@@ -2194,18 +2157,25 @@ public class VideoPlayerActivity extends AppCompatActivity {
                 boolean entered = Build.VERSION.SDK_INT
                         >= PictureInPicturePolicy.MIN_SUPPORTED_SDK
                         && isInPictureInPictureMode();
-                if (!entered && !hasWindowFocus()) {
+                if (!entered && !getLifecycle().getCurrentState()
+                        .isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
                     pictureInPictureTransitionPending = false;
                     pausePlaybackOutsidePictureInPicture(false);
+                    restorePlaybackAdjustments();
                 }
             }, 500L);
         } else {
             pausePlaybackOutsidePictureInPicture(false);
+            restorePlaybackAdjustments();
         }
     }
 
     @Override
     protected void onDestroy() {
+        if (controlsCoordinator != null) {
+            controlsCoordinator.close();
+            playerView.setControlsCoordinator(null);
+        }
         if (pictureInPictureActionReceiverRegistered) {
             unregisterReceiver(pictureInPictureActionReceiver);
             pictureInPictureActionReceiverRegistered = false;
@@ -2216,6 +2186,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         }
         clearProgressivePlaybackState();
         releasePlayerOnly();
+        restorePlaybackAdjustments();
         uiHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
@@ -2223,6 +2194,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
+        if (controlsCoordinator != null) controlsCoordinator.windowFocus(hasFocus);
         if (hasFocus) {
             hideSystemUI();
         }
@@ -2655,33 +2627,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         });
     }
 
-    private void setupScreenLockButton() {
-        screenLockButton.setOnClickListener(v -> playerView.lockPlayer(v));
-    }
-
-    private void installScreenLockSafeInsets() {
-        final int baseMargin = Math.round(8f * getResources().getDisplayMetrics().density);
-        ViewCompat.setOnApplyWindowInsetsListener(screenLockButton, (view, insets) -> {
-            androidx.core.graphics.Insets safeInsets = insets.getInsets(
-                    WindowInsetsCompat.Type.displayCutout()
-                            | WindowInsetsCompat.Type.systemBars()
-            );
-            boolean rtl = view.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
-            int safeStart = rtl ? safeInsets.right : safeInsets.left;
-            ViewGroup.LayoutParams rawParams = view.getLayoutParams();
-            if (rawParams instanceof ViewGroup.MarginLayoutParams) {
-                ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) rawParams;
-                int requiredMargin = baseMargin + safeStart;
-                if (params.getMarginStart() != requiredMargin) {
-                    params.setMarginStart(requiredMargin);
-                    view.setLayoutParams(params);
-                }
-            }
-            return insets;
-        });
-        ViewCompat.requestApplyInsets(screenLockButton);
-    }
-
     @SuppressLint("ClickableViewAccessibility")
     private void setupGestureDetection() {
         final boolean[] isAdjusting = {false};
@@ -2711,9 +2656,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         });
 
         playerView.setOnTouchListener((v, event) -> {
-            if (playerView.isControllerFullyVisible()) {
-                return false;
-            }
             gestureDetector.onTouchEvent(event);
 
             if (event.getAction() == MotionEvent.ACTION_UP) {
@@ -2734,13 +2676,15 @@ public class VideoPlayerActivity extends AppCompatActivity {
         if (deltaY != 0) {
             float change = deltaY / 1000;
             WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
-            float brightness = layoutParams.screenBrightness + change;
+            // -1 means "inherit system", not zero brightness. Resolve it before adding a delta.
+            float brightness = readCurrentBrightness() + change;
 
             brightness = Math.max(0.0f, Math.min(1.0f, brightness));
             layoutParams.screenBrightness = brightness;
             getWindow().setAttributes(layoutParams);
 
             currentBrightness = brightness;
+            brightnessAdjusted = true;
             updateBrightnessOverlay(brightness);
         }
     }
@@ -2748,29 +2692,101 @@ public class VideoPlayerActivity extends AppCompatActivity {
     private void handleVolumeChange(float deltaY) {
         if (deltaY != 0 && audioManager != null) {
             float deltaPercent = deltaY / Math.max(1f, maxVolume);
-            float targetPercent = Math.max(0f, Math.min(200f, getCombinedVolumePercent() + deltaPercent));
-
-            float basePercent = Math.min(targetPercent, 100f);
-            currentVolume = (basePercent / 100f) * maxVolume;
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(currentVolume), 0);
-
-            volumeBoostPercent = targetPercent > 100f ? targetPercent : 100f;
-            applyVolumeBoost();
-            updateVolumeOverlay(targetPercent);
+            syncActualVolume();
+            setPlaybackVolumePercent(getCombinedVolumePercent() + deltaPercent);
         }
+    }
+
+    private float readCurrentBrightness() {
+        float override = getWindow().getAttributes().screenBrightness;
+        if (override >= 0f) return PlaybackAdjustmentState.resolveBrightness(override, 0);
+        int system = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 128);
+        return PlaybackAdjustmentState.resolveBrightness(override, system);
+    }
+
+    private void syncActualVolume() {
+        if (audioManager == null) return;
+        int actual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        if (actual != Math.round(currentVolume)) {
+            currentVolume = actual;
+            volumeBoostPercent = 100f;
+            applyVolumeBoost();
+        }
+    }
+
+    private void setPlaybackVolumePercent(float requestedPercent) {
+        if (audioManager == null) return;
+        float target = PlaybackAdjustmentState.clampVolumePercent(requestedPercent);
+        int before = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        float desired = Math.min(target, 100f) * maxVolume / 100f;
+        int minimum = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC) : 0;
+        int requested = Math.max(minimum, Math.min(Math.round(maxVolume), Math.round(desired)));
+        try {
+            if (requested != before) audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, requested, 0);
+            int actual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+            playbackAdjustments.recordVolumeChange(before, actual);
+            currentVolume = actual == requested ? Math.max(minimum, desired) : actual;
+            volumeBoostPercent = actual >= maxVolume && target > 100 ? target : 100f;
+            applyVolumeBoost();
+            updateVolumeOverlay(getCombinedVolumePercent());
+        } catch (SecurityException denied) {
+            Log.w("VideoPlayer", "Media volume adjustment unavailable", denied);
+            currentVolume = before;
+            updateVolumeOverlay(getCombinedVolumePercent());
+        }
+    }
+
+    private void restorePlaybackAdjustments() {
+        if (audioManager != null) {
+            int actual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+            int original = playbackAdjustments.volumeToRestore(actual);
+            if (original >= 0) {
+                try { audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, original, 0); }
+                catch (SecurityException denied) { Log.w("VideoPlayer", "Media volume restore unavailable", denied); }
+            }
+            currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        }
+        volumeBoostPercent = 100f;
+        applyVolumeBoost();
+        if (brightnessAdjusted) {
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.screenBrightness = brightnessBeforePlayback;
+            getWindow().setAttributes(attributes);
+        }
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int code = event.getKeyCode();
+        if (exoPlayer != null && audioManager != null
+                && (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                resetHideControlsTimer();
+                playerView.dismissTransientFeedback();
+                syncActualVolume();
+                float direction = code == KeyEvent.KEYCODE_VOLUME_UP ? 1f : -1f;
+                // A physical press is one device volume step; key-up must not apply it twice.
+                float current = volumeBoostPercent > 100f ? volumeBoostPercent
+                        : audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) * 100f / Math.max(1f, maxVolume);
+                setPlaybackVolumePercent(current + direction * 100f / Math.max(1f, maxVolume));
+            }
+            return true; // Suppress Android's volume HUD, including held-key repeat/up events.
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private void updateBrightnessOverlay(float brightness) {
         brightnessOverlay.removeCallbacks(hideBrightnessOverlayRunnable);
         volumeOverlay.removeCallbacks(hideVolumeOverlayRunnable);
         volumeOverlay.setVisibility(View.GONE);
-        volumeOverlay.removeCallbacks(hideControlsRunnable);
 
         positionOverlay(brightnessOverlay);
 
         int brightnessPercentage = (int) (brightness * 100);
         brightnessProgressBar.setProgress(brightnessPercentage);
         brightnessOverlay.setVisibility(View.VISIBLE);
+        playerView.refreshFeedbackVisibility();
         brightnessOverlay.postDelayed(hideBrightnessOverlayRunnable, 1200);
     }
 
@@ -2778,7 +2794,6 @@ public class VideoPlayerActivity extends AppCompatActivity {
         volumeOverlay.removeCallbacks(hideVolumeOverlayRunnable);
         brightnessOverlay.removeCallbacks(hideBrightnessOverlayRunnable);
         brightnessOverlay.setVisibility(View.GONE);
-        brightnessOverlay.removeCallbacks(hideControlsRunnable);
 
         positionOverlay(volumeOverlay);
 
@@ -2789,6 +2804,7 @@ public class VideoPlayerActivity extends AppCompatActivity {
         volumeProgressBar.setProgress(baseProgress);
         volumeBoostProgressBar.setProgress(boostProgress);
         volumeOverlay.setVisibility(View.VISIBLE);
+        playerView.refreshFeedbackVisibility();
         volumeOverlay.postDelayed(hideVolumeOverlayRunnable, 1200);
     }
 
@@ -2845,15 +2861,30 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private void positionOverlay(View overlay) {
-        int screenHeight = getWindow().getDecorView().getHeight();
-        int topMargin = screenHeight / 8;
+        PlayerFeedbackPlacement.position(overlay);
+        androidx.core.view.OneShotPreDrawListener.add(overlay, () -> {
+            if (overlay.getVisibility() == View.VISIBLE) {
+                PlayerFeedbackPlacement.position(overlay);
+                if (playerView != null) playerView.refreshFeedbackVisibility();
+            }
+        });
+    }
 
-        androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams lp =
-                (androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)
-                        overlay.getLayoutParams();
-        lp.gravity = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
-        lp.topMargin = topMargin;
-        overlay.setLayoutParams(lp);
+    private void hideAdjustmentOverlay(View overlay) {
+        if (overlay == null) return;
+        overlay.setVisibility(View.GONE);
+        if (playerView != null) playerView.refreshFeedbackVisibility();
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (controlsCoordinator != null) controlsCoordinator.touch(event.getActionMasked());
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN && playerView != null) {
+            playerView.dismissTransientFeedback();
+            if (volumeOverlay != null) volumeOverlay.removeCallbacks(hideVolumeOverlayRunnable);
+            if (brightnessOverlay != null) brightnessOverlay.removeCallbacks(hideBrightnessOverlayRunnable);
+        }
+        return super.dispatchTouchEvent(event);
     }
 
     @OptIn(markerClass = UnstableApi.class)
@@ -2862,27 +2893,17 @@ public class VideoPlayerActivity extends AppCompatActivity {
             return;
         }
         playerView.showController();
-        syncCustomControls(true);
         resetHideControlsTimer();
     }
 
     @OptIn(markerClass = UnstableApi.class)
     private void hideControls() {
         playerView.hideController();
-        syncCustomControls(false);
         hideSystemUI();
     }
 
     private void syncCustomControls(boolean visible) {
-        int state = visible ? View.VISIBLE : View.GONE;
-        rotateButton.setVisibility(state);
-        audioTrackButton.setVisibility(state);
-        cropButton.setVisibility(state);
-        screenLockButton.setVisibility(state);
-        if (btnBack != null) btnBack.setVisibility(state);
-        if (tvVideoName != null) tvVideoName.setVisibility(state);
-        View topBar = findViewById(R.id.top_bar);
-        if (topBar != null) topBar.setVisibility(state);
+        if (tvVideoName != null) tvVideoName.setSelected(visible);
         isControlsVisible = visible;
         if (!visible) {
             hideSystemUI();
@@ -2906,15 +2927,11 @@ public class VideoPlayerActivity extends AppCompatActivity {
     }
 
     private final Handler uiHandler = new Handler(android.os.Looper.getMainLooper());
-    private final Runnable hideControlsRunnable = this::hideControls;
     private boolean immersiveBarsWereHidden;
     private long lastFullscreenExitHintAtMs;
 
     private void resetHideControlsTimer() {
-        uiHandler.removeCallbacks(hideControlsRunnable);
-        if (!pictureInPictureMode) {
-            uiHandler.postDelayed(hideControlsRunnable, 3000);
-        }
+        if (controlsCoordinator != null && !pictureInPictureMode) controlsCoordinator.interaction();
     }
 
     private void hideSystemUI() {

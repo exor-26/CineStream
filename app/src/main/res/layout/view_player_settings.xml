@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="224dp" android:layout_height="wrap_content"
+    android:background="@drawable/glass_surface_soft_bg" android:clipToOutline="true"
+    android:fillViewport="false" android:scrollbars="vertical">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:paddingTop="6dp" android:paddingBottom="6dp">
+        <include android:id="@+id/player_settings_speed" layout="@layout/exo_styled_settings_list_item"/>
+        <include android:id="@+id/player_settings_lock" layout="@layout/exo_styled_settings_list_item"/>
+    </LinearLayout>
+</ScrollView>

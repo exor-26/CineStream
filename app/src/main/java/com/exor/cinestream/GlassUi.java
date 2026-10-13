@@ -456,7 +456,9 @@ public final class GlassUi {
             applyFrostedWindow(context, window);
             WindowManager.LayoutParams params = new WindowManager.LayoutParams();
             params.copyFrom(window.getAttributes());
-            params.width = (int) (context.getResources().getDisplayMetrics().widthPixels * 0.92f);
+            params.width = Math.round(PlayerControlsLayoutPolicy.dialogWidth(
+                    Math.round(windowSize(context)[0] / context.getResources().getDisplayMetrics().density))
+                    * context.getResources().getDisplayMetrics().density);
             params.height = WindowManager.LayoutParams.WRAP_CONTENT;
             window.setAttributes(params);
         }
@@ -468,14 +470,31 @@ public final class GlassUi {
         if (window == null) {
             return;
         }
-        int displayWidth = context.getResources().getDisplayMetrics().widthPixels;
-        int displayHeight = context.getResources().getDisplayMetrics().heightPixels;
+        int[] size = windowSize(context);
+        int displayWidth = size[0];
+        int displayHeight = size[1];
         WindowManager.LayoutParams params = window.getAttributes();
         params.width = Math.min(Math.round(displayWidth * 0.92f), dp(context, 640));
         params.height = Math.round(displayHeight * (
                 context.getResources().getConfiguration().orientation
                         == Configuration.ORIENTATION_LANDSCAPE ? 0.92f : 0.86f));
         window.setAttributes(params);
+    }
+
+    private static int[] windowSize(Context context) {
+        Context candidate = context;
+        while (candidate instanceof android.content.ContextWrapper) {
+            if (candidate instanceof Activity) {
+                View decor = ((Activity) candidate).getWindow().getDecorView();
+                if (decor.getWidth() > 0 && decor.getHeight() > 0) return new int[]{decor.getWidth(), decor.getHeight()};
+                break;
+            }
+            Context next = ((android.content.ContextWrapper) candidate).getBaseContext();
+            if (next == candidate) break;
+            candidate = next;
+        }
+        return new int[]{context.getResources().getDisplayMetrics().widthPixels,
+                context.getResources().getDisplayMetrics().heightPixels};
     }
 
     private static void applyFrostedWindow(Context context, Window window) {

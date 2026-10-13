@@ -5,12 +5,14 @@ CineStream is a local Android video player focused on fast on-device browsing, b
 ## Highlights
 
 - Browse all device videos from a single library screen
+- Request Android video permission on first launch, then show clear recovery actions if access is denied
+- Respect Android 14+ selected-video access with a visible Manage access action
 - Switch between flat video list and folder-based navigation
 - Search videos by title from the main library view
 - Sort the library by name, newest date, or duration
 - Resume playback from the last watched position
 - Show thumbnail, duration, size, quality, and basic video info
-- Long-press to select one or many videos with a compact contextual action bar
+- Long-press to select one or many videos with labeled Rename, Share, Info, and Delete actions
 - Share multiple videos through scoped-storage-safe `content://` URIs
 - Rename, inspect, and batch-delete media through modern `MediaStore` flows
 - Support external `ACTION_VIEW` playback intents
@@ -19,7 +21,7 @@ CineStream is a local Android video player focused on fast on-device browsing, b
 - One-finger horizontal seek with signed delta and target-time preview
 - Left-side brightness and right-side volume gestures with sticky gesture ownership
 - Right-half touch-and-hold temporary 2× playback with exact prior-speed restoration
-- Screen lock with deliberate bottom-left left-to-right swipe unlock
+- Settings with Speed and Lock; deliberate bottom-center left-to-right swipe unlock
 - Direct crop-mode cycling without a popup, preserving source aspect ratio
 - Reliable bidirectional audio/subtitle track-list scrolling inside the player sheet
 - Professional CineStream Dev information view with guarded repository opening
@@ -101,6 +103,8 @@ CineStream uses:
 - `MediaStore` rename/delete mutation APIs for scoped storage compatibility
 - runtime media permissions instead of `MANAGE_EXTERNAL_STORAGE`
 
+On a first opening without video access, CineStream launches Android's permission dialog. If access is denied, the library area explains why permission is needed and offers **Allow access**. When Android no longer permits another prompt, **Open settings** opens the app's system settings. Android 14+ selected-video access shows only the permitted videos and offers **Manage access** to adjust the selection.
+
 ## Build requirements
 
 - Android Studio with bundled JBR
@@ -147,7 +151,7 @@ Contributions are welcome. For anything substantial:
 
 Project-facing release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
-Download the signed production APK for your device from [CineStream 9.6](https://github.com/exor-26/CineStream/releases/tag/v9.6):
+Download the signed APK for your device from [CineStream 9.7.0](https://github.com/exor-26/CineStream/releases/tag/v9.7.0):
 
 - `arm64-v8a` for almost all current 64-bit Android devices
 - `armeabi-v7a` for supported older 32-bit Android devices
@@ -156,8 +160,13 @@ The APKs are split by ABI to keep the installed download compact. CineStream doe
 
 ## Current version
 
-- `versionName`: `9.6.2`
-- `versionCode`: `94`
+- `versionName`: `9.7.0`
+- `versionCode`: `96`
+
+Version 9.7.0 is the current release source. GitHub delivery and Google Play submission are
+separate: a GitHub release does not mean the Play update has been submitted or approved.
+The phone/tablet window-sizing map and verification boundaries are documented in
+[docs/SCREEN_ADAPTATION.md](docs/SCREEN_ADAPTATION.md).
 
 ## Release packaging
 
@@ -172,13 +181,23 @@ Version 9.6.1 targets Android 16/API 36 for Google Play submission and exposes t
 
 Version 9.6.2 uses the production package name `com.exor.cinestream` and labels videos stored directly at the shared-storage root as `Internal storage`.
 
+Version 9.6.3 improves video-permission recovery and adds readable labels beneath the four library selection actions. The update handover is documented in [playstore/updates/9.6.3/HANDOVER.md](playstore/updates/9.6.3/HANDOVER.md), including separate Play listing artwork and release notes. This update does not introduce playback or codec changes.
+
+Version 9.7.0 introduces dark, themed glass playback controls. Settings offers Speed and Lock;
+Speed retains Media3's existing picker. Gesture feedback hides the entire controller together,
+uses a stable upper lane, and includes a live pinch-zoom percentage. Narrow windows retain
+48dp button targets, short landscape windows reposition the controls between the toolbar and
+dock, large-text timestamps can stack inside their pill, and tablet docks/dialogs have bounded
+widths. The media surface, original audio system, and decoder pipeline are preserved by these
+controller and screen-sizing changes. Previous release bundles and their artwork remain
+historical artifacts; they must not be relabeled as 9.7.0.
+
 ## Roadmap ideas
 
-- add proper release screenshots for GitHub and Play listing
 - add instrumentation coverage for library and player entry flows
 - extend physical-device gesture regression coverage
 - support richer subtitle controls
-- add a dedicated empty state and media-permission onboarding copy
+- add a dedicated empty state for an accessible library with no videos
 
 ## Repository hygiene
 

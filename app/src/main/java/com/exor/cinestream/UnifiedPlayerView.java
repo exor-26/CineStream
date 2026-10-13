@@ -13,6 +13,7 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
@@ -44,6 +45,29 @@ public final class UnifiedPlayerView extends PlayerView {
     private boolean nativeControllerOwnsGesture;
     private boolean delegatedGestureCancelled;
     private boolean pictureInPictureMode;
+    @Nullable private PlayerControlsCoordinator controlsCoordinator;
+
+    void setControlsCoordinator(@Nullable PlayerControlsCoordinator coordinator) {
+        controlsCoordinator = coordinator;
+    }
+
+    void showNativeControls() { super.showController(); }
+    void hideNativeControls() { super.hideController(); }
+
+    void refreshFeedbackVisibility() {
+        if (controlsCoordinator != null) controlsCoordinator.feedbackChanged();
+    }
+
+    @Override public void showController() {
+        if (controlsCoordinator != null) controlsCoordinator.show();
+        else super.showController();
+    }
+
+    @Override public void hideController() {
+        if (controlsCoordinator == null) { super.hideController(); return; }
+        if (pictureInPictureMode || isPlayerLocked()) controlsCoordinator.hideNow();
+        else controlsCoordinator.hideAnimated();
+    }
 
     private float currentZoom = 1f;
     private int lastZoomPercentage = 100;
@@ -122,6 +146,7 @@ public final class UnifiedPlayerView extends PlayerView {
                         float requested = currentZoom * detector.getScaleFactor();
                         float bounded = clampZoomToSurface(requested);
                         if (Math.abs(bounded - currentZoom) < 0.0005f) {
+                            presentZoomPercentage();
                             return true;
                         }
                         currentZoom = bounded;
@@ -164,6 +189,7 @@ public final class UnifiedPlayerView extends PlayerView {
 
     public void setPictureInPictureMode(boolean enabled) {
         pictureInPictureMode = enabled;
+        if (controlsCoordinator != null) controlsCoordinator.suppress(enabled);
         resetTransientPlayerUi();
         if (enabled) {
             hideController();
@@ -213,6 +239,8 @@ public final class UnifiedPlayerView extends PlayerView {
             cancelDelegatedGesture(event);
             hideController();
             scaleGestureDetector.onTouchEvent(event);
+            lastZoomPercentage = -1;
+            presentZoomPercentage();
             return true;
         }
 
@@ -305,6 +333,7 @@ public final class UnifiedPlayerView extends PlayerView {
                 }
                 if (finalOwner == PlayerGestureStateMachine.Owner.PINCH_ZOOM) {
                     scaleGestureDetector.onTouchEvent(event);
+                    scheduleFeedbackHide();
                 }
                 finishGesture();
                 return handled;
@@ -316,6 +345,7 @@ public final class UnifiedPlayerView extends PlayerView {
                 }
                 cancelTemporarySpeed(true);
                 cancelSeekPreview(true);
+                cancelGestureFeedback();
                 if (!delegatedGestureCancelled) {
                     super.dispatchTouchEvent(event);
                 }
@@ -380,9 +410,9 @@ public final class UnifiedPlayerView extends PlayerView {
         temporarySpeedActive = true;
         hideController();
         showFeedback(
-                R.drawable.ic_forward,
+                0,
                 getResources().getString(R.string.temporary_speed_feedback),
-                getResources().getString(R.string.temporary_speed_hint),
+                null,
                 false
         );
         announceForAccessibility(
@@ -616,9 +646,8 @@ public final class UnifiedPlayerView extends PlayerView {
         }
         lastPresentedSeekTargetMs = seekTargetMs;
         long deltaMs = seekTargetMs - seekStartPositionMs;
-        String arrow = deltaMs >= 0L ? "→" : "←";
         String sign = deltaMs >= 0L ? "+" : "−";
-        String delta = arrow + " " + sign
+        String delta = sign
                 + PlayerGestureMath.formatTimestamp(Math.abs(deltaMs));
         showFeedback(
                 deltaMs >= 0L ? R.drawable.ic_forward : R.drawable.ic_rewind,
@@ -655,12 +684,13 @@ public final class UnifiedPlayerView extends PlayerView {
     }
 
     private void cancelSeekPreview(boolean hideFeedback) {
+        boolean wasActive = seekPreviewActive;
         seekPreviewActive = false;
         seekStartPositionMs = 0L;
         seekDurationMs = 0L;
         seekTargetMs = 0L;
         lastPresentedSeekTargetMs = Long.MIN_VALUE;
-        if (hideFeedback && !temporarySpeedActive) {
+        if (PlayerGestureStateMachine.shouldHideSeekFeedback(hideFeedback, wasActive, temporarySpeedActive)) {
             cancelGestureFeedback();
         }
     }
@@ -774,6 +804,7 @@ public final class UnifiedPlayerView extends PlayerView {
         cancelTemporarySpeed(true);
         cancelSeekPreview(true);
         gestureStateMachine.setLocked(true);
+        if (controlsCoordinator != null) controlsCoordinator.suppress(true);
         nativeControllerOwnsGesture = false;
         delegatedGestureCancelled = true;
 
@@ -787,7 +818,7 @@ public final class UnifiedPlayerView extends PlayerView {
         showFeedback(
                 R.drawable.ic_screen_lock,
                 getResources().getString(R.string.screen_locked),
-                getResources().getString(R.string.unlock_hint_short),
+                null,
                 true
         );
         showUnlockHint();
@@ -799,8 +830,15 @@ public final class UnifiedPlayerView extends PlayerView {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 cancelTemporarySpeed(true);
+                View unlockHandle = getRootView().findViewById(R.id.unlock_swipe_thumb);
+                boolean handleTouched = unlockHandle != null && unlockHandle.isShown()
+                        && unlockHandle.getGlobalVisibleRect(hitRect)
+                        && hitRect.contains(Math.round(event.getRawX()), Math.round(event.getRawY()));
                 gestureStateMachine.beginGesture(
-                        event.getX(), event.getY(), getWidth(), getHeight());
+                        event.getX(), event.getY(), getWidth(), getHeight(), handleTouched);
+                showUnlockHint();
+                View activeHint = getRootView().findViewById(R.id.unlock_hint_container);
+                if (activeHint != null) activeHint.removeCallbacks(hideUnlockHintRunnable);
                 return true;
 
             case MotionEvent.ACTION_POINTER_DOWN:
@@ -814,13 +852,16 @@ public final class UnifiedPlayerView extends PlayerView {
                 }
                 if (gestureStateMachine.getOwner()
                         == PlayerGestureStateMachine.Owner.UNLOCK_SWIPE) {
-                    gestureStateMachine.updateUnlock(
+                    PlayerGestureStateMachine.UnlockProgress progress = gestureStateMachine.updateUnlock(
                             event.getX(),
                             event.getY(),
                             touchSlop,
                             minimumUnlockDistance(),
                             maximumUnlockVerticalDrift()
                     );
+                    updateUnlockHintProgress(progress == PlayerGestureStateMachine.UnlockProgress.CANCELLED
+                            ? 0f : Math.max(0f, Math.min(1f,
+                            (event.getX() - gestureStateMachine.getDownX()) / minimumUnlockDistance())));
                 }
                 return true;
 
@@ -836,6 +877,7 @@ public final class UnifiedPlayerView extends PlayerView {
 
             case MotionEvent.ACTION_CANCEL:
                 gestureStateMachine.resetGesture();
+                showUnlockHint();
                 return true;
 
             default:
@@ -849,6 +891,7 @@ public final class UnifiedPlayerView extends PlayerView {
         cancelUnlockHint();
         setUseController(true);
         setPlayerControlsEnabled(true);
+        if (controlsCoordinator != null) controlsCoordinator.suppress(false);
         if (playerUnlockedListener != null) {
             playerUnlockedListener.run();
         } else {
@@ -905,11 +948,6 @@ public final class UnifiedPlayerView extends PlayerView {
             topBar.setVisibility(enabled ? View.VISIBLE : View.GONE);
         }
 
-        View lockButton = root.findViewById(R.id.btn_screen_lock);
-        if (lockButton != null) {
-            lockButton.setEnabled(enabled);
-            lockButton.setVisibility(enabled ? View.VISIBLE : View.GONE);
-        }
     }
 
     private static void setEnabledRecursively(@Nullable View view, boolean enabled) {
@@ -938,6 +976,7 @@ public final class UnifiedPlayerView extends PlayerView {
             volume.animate().cancel();
             volume.setVisibility(View.GONE);
         }
+        refreshFeedbackVisibility();
     }
 
     private boolean animationsEnabled() {
@@ -952,6 +991,7 @@ public final class UnifiedPlayerView extends PlayerView {
             boolean autoHide
     ) {
         hideTransientAdjustmentOverlays();
+        cancelUnlockHint();
         View feedback = getRootView().findViewById(R.id.gesture_feedback);
         if (feedback == null) {
             return;
@@ -959,8 +999,16 @@ public final class UnifiedPlayerView extends PlayerView {
         ImageView icon = feedback.findViewById(R.id.gesture_feedback_icon);
         TextView titleView = feedback.findViewById(R.id.gesture_feedback_title);
         TextView detailView = feedback.findViewById(R.id.gesture_feedback_detail);
+        boolean cropPreview = iconResource == R.drawable.ic_crop
+                || iconResource == R.drawable.ic_crop_fill || iconResource == R.drawable.ic_crop_fit;
+        styleFeedback(feedback, titleView, detailView, cropPreview);
+        View speedArrows = feedback.findViewById(R.id.gesture_feedback_speed);
+        if (speedArrows != null) {
+            speedArrows.setVisibility(temporarySpeedActive && iconResource == 0 ? View.VISIBLE : View.GONE);
+        }
         if (icon != null) {
-            icon.setImageResource(iconResource);
+            icon.setVisibility(iconResource == 0 ? View.GONE : View.VISIBLE);
+            if (iconResource != 0) icon.setImageResource(iconResource);
         }
         if (titleView != null) {
             titleView.setText(title);
@@ -972,6 +1020,7 @@ public final class UnifiedPlayerView extends PlayerView {
         }
         feedback.removeCallbacks(hideFeedbackRunnable);
         feedback.animate().cancel();
+        PlayerFeedbackPlacement.position(feedback);
         if (!animationsEnabled()) {
             feedback.setAlpha(1f);
             feedback.setScaleX(1f);
@@ -1000,6 +1049,59 @@ public final class UnifiedPlayerView extends PlayerView {
         if (autoHide) {
             feedback.postDelayed(hideFeedbackRunnable, FEEDBACK_VISIBLE_MS);
         }
+        // Hide every controller group together, before the feedback's first frame.
+        refreshFeedbackVisibility();
+    }
+
+    private void styleFeedback(View feedback, TextView title, TextView detail, boolean crop) {
+        LinearLayout text = feedback.findViewById(R.id.gesture_feedback_text);
+        if (text == null || title == null || detail == null) return;
+        float density = getResources().getDisplayMetrics().density;
+        LinearLayout container = (LinearLayout) feedback;
+        container.setOrientation(crop ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        container.setGravity(crop ? android.view.Gravity.CENTER : android.view.Gravity.CENTER_VERTICAL);
+        container.setMinimumWidth(crop ? Math.round(164 * density) : 0);
+        container.setMinimumHeight(crop ? 0 : Math.round(40 * density));
+        text.setOrientation(crop ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        text.setGravity(crop ? android.view.Gravity.CENTER
+                : android.view.Gravity.CENTER_VERTICAL);
+        feedback.setPadding(Math.round((crop ? 20 : 12) * density), Math.round((crop ? 16 : 8) * density),
+                Math.round((crop ? 20 : 12) * density), Math.round((crop ? 16 : 8) * density));
+        View icon = feedback.findViewById(R.id.gesture_feedback_icon);
+        if (icon != null) {
+            LinearLayout.LayoutParams iconParams = (LinearLayout.LayoutParams) icon.getLayoutParams();
+            iconParams.width = iconParams.height = Math.round((crop ? 28 : 20) * density);
+            iconParams.setMarginEnd(crop ? 0 : Math.round(8 * density));
+            icon.setLayoutParams(iconParams);
+        }
+        LinearLayout.LayoutParams textParams = (LinearLayout.LayoutParams) text.getLayoutParams();
+        textParams.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+        textParams.weight = 0;
+        text.setLayoutParams(textParams);
+        title.setMaxWidth(crop ? Integer.MAX_VALUE : Math.round(100 * density));
+        title.setGravity(android.view.Gravity.CENTER);
+        title.setTextSize(crop ? 18 : 14);
+        LinearLayout.LayoutParams titleParams = (LinearLayout.LayoutParams) title.getLayoutParams();
+        titleParams.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+        titleParams.topMargin = crop ? Math.round(8 * density) : 0;
+        title.setLayoutParams(titleParams);
+        title.setEllipsize(crop ? null : android.text.TextUtils.TruncateAt.END);
+        detail.setMaxWidth(Math.round((crop ? 220 : 140) * density));
+        detail.setMaxLines(crop ? Integer.MAX_VALUE : 1);
+        detail.setMinLines(1);
+        detail.setGravity(android.view.Gravity.CENTER);
+        detail.setEllipsize(crop ? null : android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams detailParams = (LinearLayout.LayoutParams) detail.getLayoutParams();
+        detailParams.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+        detailParams.setMarginStart(crop ? 0 : Math.round(8 * density));
+        detailParams.topMargin = crop ? Math.round(3 * density) : 0;
+        detail.setLayoutParams(detailParams);
+        androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams params =
+                (androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) feedback.getLayoutParams();
+        params.width = params.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        params.setMarginStart(Math.round(16 * density));
+        params.setMarginEnd(Math.round(16 * density));
+        feedback.setLayoutParams(params);
     }
 
     private void scheduleFeedbackHide() {
@@ -1020,6 +1122,8 @@ public final class UnifiedPlayerView extends PlayerView {
         if (!animationsEnabled()) {
             feedback.setVisibility(View.GONE);
             feedback.setAlpha(0f);
+            lastZoomPercentage = -1;
+            refreshFeedbackVisibility();
             return;
         }
         feedback.animate()
@@ -1028,7 +1132,11 @@ public final class UnifiedPlayerView extends PlayerView {
                 .scaleY(0.96f)
                 .translationY(-4f * getResources().getDisplayMetrics().density)
                 .setDuration(140L)
-                .withEndAction(() -> feedback.setVisibility(View.GONE))
+                .withEndAction(() -> {
+                    feedback.setVisibility(View.GONE);
+                    lastZoomPercentage = -1;
+                    refreshFeedbackVisibility();
+                })
                 .start();
     }
 
@@ -1039,6 +1147,33 @@ public final class UnifiedPlayerView extends PlayerView {
         }
         hint.removeCallbacks(hideUnlockHintRunnable);
         hint.animate().cancel();
+        View thumb = hint.findViewById(R.id.unlock_swipe_thumb);
+        if (thumb != null) {
+            thumb.animate().cancel();
+            if (animationsEnabled()) thumb.animate().translationX(0f).setDuration(160L).start();
+            else thumb.setTranslationX(0f);
+        }
+        View label = hint.findViewById(R.id.unlock_swipe_label);
+        if (label != null) {
+            label.animate().cancel();
+            if (animationsEnabled()) label.animate().alpha(1f).setDuration(160L).start();
+            else label.setAlpha(1f);
+        }
+        androidx.core.view.WindowInsetsCompat insets = androidx.core.view.ViewCompat.getRootWindowInsets(hint);
+        if (insets != null) {
+            androidx.core.graphics.Insets safe = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+                            | androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams params =
+                    (androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) hint.getLayoutParams();
+            float density = getResources().getDisplayMetrics().density;
+            int sideMargin = Math.max(safe.left, safe.right) + Math.round(16 * density);
+            params.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL;
+            params.leftMargin = params.rightMargin = sideMargin;
+            params.width = Math.min(Math.round(260 * density), Math.max(1, getWidth() - 2 * sideMargin));
+            params.bottomMargin = safe.bottom + Math.round(32 * density);
+            hint.setLayoutParams(params);
+        }
         hint.setVisibility(View.VISIBLE);
         if (!animationsEnabled()) {
             hint.setAlpha(1f);
@@ -1053,6 +1188,26 @@ public final class UnifiedPlayerView extends PlayerView {
                     .start();
         }
         hint.postDelayed(hideUnlockHintRunnable, UNLOCK_HINT_VISIBLE_MS);
+    }
+
+    private void updateUnlockHintProgress(float progress) {
+        View hint = getRootView().findViewById(R.id.unlock_hint_container);
+        if (hint == null) return;
+        hint.removeCallbacks(hideUnlockHintRunnable);
+        hint.animate().cancel();
+        hint.setAlpha(1f);
+        hint.setTranslationX(0f);
+        View thumb = hint.findViewById(R.id.unlock_swipe_thumb);
+        if (thumb != null) {
+            thumb.animate().cancel();
+            float gap = 8 * getResources().getDisplayMetrics().density;
+            thumb.setTranslationX(progress * Math.max(0, hint.getWidth() - thumb.getWidth() - gap));
+        }
+        View label = hint.findViewById(R.id.unlock_swipe_label);
+        if (label != null) {
+            label.animate().cancel();
+            label.setAlpha(Math.max(0f, 1 - progress * 2));
+        }
     }
 
     private void animateUnlockHintOut() {
@@ -1087,6 +1242,7 @@ public final class UnifiedPlayerView extends PlayerView {
     }
 
     private void cancelGestureFeedback() {
+        lastZoomPercentage = -1;
         View feedback = getRootView().findViewById(R.id.gesture_feedback);
         if (feedback == null) {
             return;
@@ -1098,6 +1254,14 @@ public final class UnifiedPlayerView extends PlayerView {
         feedback.setScaleY(1f);
         feedback.setTranslationY(0f);
         feedback.setVisibility(View.GONE);
+        refreshFeedbackVisibility();
+    }
+
+    /** Clear presentation only; gesture ownership, zoom, speed and playback are unchanged. */
+    public void dismissTransientFeedback() {
+        cancelGestureFeedback();
+        if (!isPlayerLocked()) cancelUnlockHint();
+        hideTransientAdjustmentOverlays();
     }
 
     private void resetTransientPlayerUi() {
@@ -1118,6 +1282,7 @@ public final class UnifiedPlayerView extends PlayerView {
         gestureStateMachine.setLocked(false);
         setUseController(true);
         setPlayerControlsEnabled(true);
+        if (controlsCoordinator != null) controlsCoordinator.suppress(pictureInPictureMode);
     }
 
     @Override

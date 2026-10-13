@@ -22,6 +22,8 @@ final class Media3AudioMetadataProbe {
 
     static final class Result {
         final List<DetailedAudioFormatter.Track> tracks = new ArrayList<>();
+        Format videoFormat;
+        long durationUs = C.TIME_UNSET;
 
         boolean hasAudioTracks() {
             return !tracks.isEmpty();
@@ -63,11 +65,15 @@ final class Media3AudioMetadataProbe {
         Result result = new Result();
         MediaItem item = MediaItem.fromUri(uri);
 
-        try (MetadataRetriever retriever = new MetadataRetriever.Builder(context, item).build()) {
+        try (MetadataRetriever retriever = new MetadataRetriever.Builder(context, item)
+                .setMediaSourceFactory(CineMediaSources.factory(context)).build()) {
             TrackGroupArray groups = retriever.retrieveTrackGroups().get(8, TimeUnit.SECONDS);
             int ordinal = 1;
             for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
                 TrackGroup group = groups.get(groupIndex);
+                if (group.type == C.TRACK_TYPE_VIDEO && result.videoFormat == null && group.length > 0) {
+                    result.videoFormat = group.getFormat(0);
+                }
                 if (group.type != C.TRACK_TYPE_AUDIO) continue;
                 for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
                     Format format = group.getFormat(trackIndex);
@@ -80,6 +86,12 @@ final class Media3AudioMetadataProbe {
                             format.selectionFlags));
                     ordinal++;
                 }
+            }
+            try {
+                result.durationUs = retriever.retrieveDurationUs().get(2, TimeUnit.SECONDS);
+            } catch (Exception durationUnavailable) {
+                // Unknown/live durations must not discard already-discovered video/audio tracks.
+                Log.d("Media3MetadataProbe", "Duration not reported by source");
             }
         } catch (Exception e) {
             Log.w("Media3MetadataProbe", "Media3 audio metadata probe failed", e);

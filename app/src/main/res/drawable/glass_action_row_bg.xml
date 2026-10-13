@@ -1,7 +1,7 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape>
-            <solid android:color="@color/glass_row_pressed" />
+            <solid android:color="?attr/cineGlassPressedColor" />
             <corners android:radius="18dp" />
         </shape>
     </item>

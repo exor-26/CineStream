@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.exor.cinestream.PlayerSettingsRow xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:minWidth="224dp"
+    android:minHeight="56dp" android:orientation="horizontal" android:gravity="center_vertical"
+    android:paddingStart="12dp" android:paddingEnd="12dp" android:paddingTop="8dp" android:paddingBottom="8dp"
+    android:background="@drawable/player_control_ripple">
+    <ImageView android:id="@+id/exo_icon" android:layout_width="24dp" android:layout_height="24dp"
+        android:layout_marginEnd="12dp" app:tint="@color/glass_icon_tint"/>
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+        <TextView android:id="@+id/exo_main_text" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium" android:textSize="14sp" android:textColor="@color/glass_text_primary"/>
+        <TextView android:id="@+id/exo_sub_text" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="3dp" android:textSize="12sp" android:textColor="@color/glass_text_secondary"/>
+    </LinearLayout>
+</com.exor.cinestream.PlayerSettingsRow>

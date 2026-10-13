@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.recyclerview.widget.RecyclerView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/exo_settings_listview" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/glass_surface_soft_bg" android:clipToOutline="true"
+    android:paddingTop="6dp" android:paddingBottom="6dp" android:scrollbars="vertical"/>

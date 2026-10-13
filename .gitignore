@@ -18,3 +18,14 @@ local.properties
 cinestream-*.xml
 /playstore/release/*.aab
 /playstore/release/*.apks
+
+# Signing material, generated release binaries and local handover archives stay out of Git.
+*.jks
+*.keystore
+*.apk
+*.aab
+*.apks
+*.idsig
+/playstore/updates/*.zip
+/--ks
+/.idea/deviceManager.xml

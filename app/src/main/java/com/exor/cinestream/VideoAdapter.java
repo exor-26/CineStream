@@ -31,6 +31,9 @@ import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
+import com.bumptech.glide.signature.ObjectKey;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -54,6 +57,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     private static final ExecutorService EXECUTOR = AppExecutors.metadata();
     private static final LruCache<String, MediaInfoSnapshot> MEDIA_INFO_CACHE = new LruCache<>(256);
     private static final LruCache<String, Integer> TINT_COLOR_CACHE = new LruCache<>(512);
+    static final Object PRESENTATION_PAYLOAD = new Object();
 
     private final Context         context;
     private final List<VideoFile> videoFiles;
@@ -77,10 +81,36 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     @RequiresApi(api = Build.VERSION_CODES.N)
     @OptIn(markerClass = UnstableApi.class)
     @Override
+    public void onBindViewHolder(@NonNull VideoViewHolder holder, int position,
+                                @NonNull List<Object> payloads) {
+        VideoFile video = videoFiles.get(position);
+        if (!payloads.isEmpty() && video.getPlaybackKey().equals(holder.boundPlaybackKey)
+                && payloads.stream().allMatch(payload -> payload == PRESENTATION_PAYLOAD)) {
+            bindPresentation(holder, video);
+            return;
+        }
+        onBindViewHolder(holder, position);
+    }
+
+    private void bindPresentation(VideoViewHolder holder, VideoFile video) {
+        boolean selected = selectedPlaybackKeys.contains(video.getPlaybackKey());
+        holder.selectionCheck.setVisibility(selected ? View.VISIBLE : View.GONE);
+        holder.itemView.setActivated(selected);
+        if (holder.videoProgress != null) {
+            float fraction = PlaybackPrefs.getInstance(context).getProgressFraction(video.getPlaybackKey());
+            holder.videoProgress.setProgress(Math.round(fraction * 1000));
+        }
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.N)
+    @OptIn(markerClass = UnstableApi.class)
+    @Override
     public void onBindViewHolder(@NonNull VideoViewHolder holder, int position) {
         VideoFile videoFile = videoFiles.get(position);
         Uri       videoUri  = videoFile.getContentUri();
         String    playbackKey = videoFile.getPlaybackKey();
+        String    previewKey = LibraryPreviewCache.key(videoFile);
+        java.io.File cachedThumbnail = LibraryPreviewCache.thumbnail(context, previewKey);
 
         // RecyclerView may reuse this holder while Glide is still decoding the previous video.
         // Cancel the stale request first so low-end devices do not keep decoding work that can no
@@ -92,6 +122,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         }
 
         holder.boundPlaybackKey = playbackKey;
+        holder.boundPreviewKey = previewKey;
         holder.videoName.setText(videoFile.getName());
         boolean selected = selectedPlaybackKeys.contains(playbackKey);
         holder.selectionCheck.setVisibility(selected ? View.VISIBLE : View.GONE);
@@ -101,14 +132,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         if (holder.videoProgress != null) {
             float fraction = PlaybackPrefs.getInstance(context)
                     .getProgressFraction(videoFile.getPlaybackKey());
-            if (fraction > 0f) {
-                holder.videoProgress.setVisibility(View.VISIBLE);
-                holder.videoProgress.setPivotX(0f);
-                holder.videoProgress.setScaleX(fraction);
-            } else {
-                holder.videoProgress.setVisibility(View.GONE);
-                holder.videoProgress.setScaleX(1f);
-            }
+            holder.videoProgress.setProgress(Math.round(fraction * 1000));
         }
 
         holder.cardTint.setBackgroundColor(Color.TRANSPARENT);
@@ -119,11 +143,12 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         // ── Thumbnail + Palette tint ─────────────────────────────────
         CustomTarget<Bitmap> target = new CustomTarget<Bitmap>() {
             private boolean compatibilityCacheAttempted;
+            private boolean originalAttempted = cachedThumbnail == null;
 
             @Override
             public void onResourceReady(@NonNull Bitmap resource,
                                         Transition<? super Bitmap> transition) {
-                if (!playbackKey.equals(holder.boundPlaybackKey)) {
+                if (!playbackKey.equals(holder.boundPlaybackKey) || holder.thumbnailTarget != this) {
                     return;
                 }
                 holder.videoThumbnail.setImageBitmap(resource);
@@ -165,6 +190,14 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                 }
                 holder.videoThumbnail.setImageDrawable(errorDrawable);
                 applyCachedTint(holder, playbackKey);
+                if (!originalAttempted) {
+                    originalAttempted = true;
+                    Glide.with(holder.itemView).asBitmap().load(videoUri)
+                            .signature(new ObjectKey(previewKey))
+                            .diskCacheStrategy(DiskCacheStrategy.ALL).override(336, 216).centerCrop()
+                            .placeholder(R.drawable.ic_video_placeholder).into(this);
+                    return;
+                }
                 if (compatibilityCacheAttempted) {
                     return;
                 }
@@ -177,12 +210,18 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
                                     appContext,
                                     videoUri
                             );
+                    Bitmap parsedFrame = cachedVideo == null
+                            ? CineThumbnailProbe.probe(appContext, videoUri, previewKey) : null;
                     MAIN_HANDLER.post(() -> {
-                        if (cachedVideo == null
-                                || !playbackKey.equals(holder.boundPlaybackKey)
+                        if (!playbackKey.equals(holder.boundPlaybackKey)
                                 || holder.thumbnailTarget != this) {
                             return;
                         }
+                        if (parsedFrame != null) {
+                            onResourceReady(parsedFrame, null);
+                            return;
+                        }
+                        if (cachedVideo == null) return;
                         Glide.with(holder.itemView)
                                 .asBitmap()
                                 .load(cachedVideo)
@@ -199,7 +238,8 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
         Glide.with(holder.itemView)
                 .asBitmap()
-                .load(videoUri)
+                .load(cachedThumbnail != null ? cachedThumbnail : videoUri)
+                .signature(new ObjectKey(previewKey))
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .override(336, 216)
                 .centerCrop()
@@ -241,7 +281,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         if (!selectedPlaybackKeys.add(key)) {
             selectedPlaybackKeys.remove(key);
         }
-        notifyItemChanged(adapterPosition);
+        notifyItemChanged(adapterPosition, PRESENTATION_PAYLOAD);
         listener.onVideoSelectionChanged(this, getSelectedVideos());
     }
 
@@ -260,14 +300,19 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             return;
         }
         selectedPlaybackKeys.clear();
-        notifyItemRangeChanged(0, getItemCount());
+        notifyItemRangeChanged(0, getItemCount(), PRESENTATION_PAYLOAD);
         listener.onVideoSelectionChanged(this, new ArrayList<>());
     }
 
     public void showDetails(VideoFile videoFile) {
         EXECUTOR.execute(() -> {
-            MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, true);
-            MAIN_HANDLER.post(() -> showVideoInfo(videoFile, snapshot));
+            MediaInfoSnapshot snapshot = readCachedSnapshot(context, videoFile);
+            if (snapshot == null || !snapshot.detailed) {
+                snapshot = extractMediaInfo(videoFile, true);
+                cacheSnapshot(videoFile, snapshot);
+            }
+            MediaInfoSnapshot result = snapshot;
+            MAIN_HANDLER.post(() -> showVideoInfo(videoFile, result));
         });
     }
 
@@ -317,6 +362,11 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             VideoFile videoFile,
             String playbackKey
     ) {
+        MediaInfoSnapshot parsed = MEDIA_INFO_CACHE.get(LibraryPreviewCache.key(videoFile));
+        if (parsed != null) {
+            applyFallbackRowValues(holder, playbackKey, parsed, true, true);
+            if (!"00:00".equals(parsed.durationLabel) && !"Unknown".equals(parsed.qualityLabel)) return;
+        }
         MediaStoreMetadataIndex.IndexedMetadata cached =
                 MediaStoreMetadataIndex.peek(videoFile.getId());
 
@@ -371,7 +421,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
             return;
         }
 
-        MediaInfoSnapshot cachedSnapshot = MEDIA_INFO_CACHE.get(playbackKey);
+        MediaInfoSnapshot cachedSnapshot = MEDIA_INFO_CACHE.get(LibraryPreviewCache.key(videoFile));
         if (cachedSnapshot != null) {
             applyFallbackRowValues(
                     holder,
@@ -384,13 +434,18 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         }
 
         EXECUTOR.execute(() -> {
-            MediaInfoSnapshot snapshot = extractMediaInfo(videoFile, false);
+            MediaInfoSnapshot snapshot = readCachedSnapshot(context, videoFile);
+            if (snapshot == null) {
+                snapshot = extractMediaInfo(videoFile, false);
+                cacheSnapshot(videoFile, snapshot);
+            }
+            MediaInfoSnapshot result = snapshot;
             MAIN_HANDLER.post(() -> {
-                MEDIA_INFO_CACHE.put(playbackKey, snapshot);
+                if (!LibraryPreviewCache.key(videoFile).equals(holder.boundPreviewKey)) return;
                 applyFallbackRowValues(
                         holder,
                         playbackKey,
-                        snapshot,
+                        result,
                         needDuration,
                         needQuality
                 );
@@ -419,6 +474,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     @Override
     public void onViewRecycled(@NonNull VideoViewHolder holder) {
         holder.boundPlaybackKey = null;
+        holder.boundPreviewKey = null;
         if (holder.thumbnailTarget != null) {
             Glide.with(holder.itemView).clear(holder.thumbnailTarget);
             holder.thumbnailTarget = null;
@@ -439,8 +495,9 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         android.widget.ImageView selectionCheck;
         TextView videoName, videoSize, videoDuration, videoQuality;
         View cardTint;
-        View videoProgress;
+        android.widget.ProgressBar videoProgress;
         String boundPlaybackKey;
+        String boundPreviewKey;
         CustomTarget<Bitmap> thumbnailTarget;
 
         @SuppressLint("WrongViewCast")
@@ -484,6 +541,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     // ── Media info snapshot ──────────────────────────────────────────
 
     private static final class MediaInfoSnapshot {
+        boolean detailed;
         String durationLabel     = "00:00";
         String qualityLabel      = "Unknown";
         String resolutionLabel   = "Unknown";
@@ -508,6 +566,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
 
     private MediaInfoSnapshot extractMediaInfo(VideoFile videoFile, boolean allowFfmpegFallback) {
         MediaInfoSnapshot      snapshot  = new MediaInfoSnapshot();
+        snapshot.detailed = allowFfmpegFallback;
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         MediaExtractor         extractor = new MediaExtractor();
 
@@ -515,6 +574,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         snapshot.folderLabel   = videoFile.getFolderName() != null
                 ? videoFile.getFolderName() : "Unknown";
         snapshot.uriLabel      = videoFile.getContentUri().toString();
+        snapshot.containerLabel = prettifyContainer(null, videoFile.getName());
 
         try {
             Uri uri = videoFile.getContentUri();
@@ -699,9 +759,33 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         }
         // Enumerate every audio track with Media3, then fill only missing technical
         // fields from the platform extractor when both parsers report the same track count.
-        if (allowFfmpegFallback) {
+        if (allowFfmpegFallback || "Unknown".equals(snapshot.resolutionLabel)
+                || "00:00".equals(snapshot.durationLabel) || "Unknown".equals(snapshot.durationLabel)) {
             Media3AudioMetadataProbe.Result media3 =
                     Media3AudioMetadataProbe.probe(context, videoFile.getContentUri());
+            if (media3.durationUs > 0) {
+                snapshot.durationLabel = formatDuration(media3.durationUs / 1000);
+                if ("Unknown".equals(snapshot.bitrateLabel) && videoFile.getSizeBytes() > 0) {
+                    snapshot.bitrateLabel = formatBitrate((long)
+                            (videoFile.getSizeBytes() * 8_000_000.0 / media3.durationUs)) + " (estimated)";
+                }
+            }
+            androidx.media3.common.Format video = media3.videoFormat;
+            if (video != null) {
+                snapshot.videoCodecLabel = prettifyCodec(video.sampleMimeType);
+                int width = video.width;
+                int height = video.height;
+                if (video.rotationDegrees == 90 || video.rotationDegrees == 270) {
+                    int swap = width; width = height; height = swap;
+                }
+                if (width > 0 && height > 0) {
+                    snapshot.resolutionLabel = String.format(Locale.US, "%d x %d", width, height);
+                    snapshot.qualityLabel = VideoQualityLabels.forDimensions(width, height);
+                }
+                if (video.frameRate > 0) {
+                    snapshot.frameRateLabel = String.format(Locale.US, "%.2f fps", video.frameRate);
+                }
+            }
             if (media3.hasAudioTracks()) {
                 media3.enrichMissingFromPlatform(
                         snapshot.platformAudioCodecs,
@@ -720,6 +804,63 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
         }
 
         return snapshot;
+    }
+
+    /** Warm persistent details on the library worker, before the first visible row is bound. */
+    static void preloadCachedMetadata(Context context, List<VideoFile> files) {
+        // Keep the earliest library entries resident when the library exceeds the memory bound.
+        for (int i = files.size() - 1; i >= 0; i--) readCachedSnapshot(context, files.get(i));
+    }
+
+    private static MediaInfoSnapshot readCachedSnapshot(Context context, VideoFile video) {
+        String key = LibraryPreviewCache.key(video);
+        MediaInfoSnapshot cached = MEDIA_INFO_CACHE.get(key);
+        if (cached != null) return cached;
+        String json = LibraryPreviewCache.metadata(context, key);
+        if (json == null) return null;
+        try {
+            JSONObject object = new JSONObject(json);
+            MediaInfoSnapshot snapshot = new MediaInfoSnapshot();
+            snapshot.durationLabel = object.getString("duration");
+            snapshot.qualityLabel = object.getString("quality");
+            snapshot.resolutionLabel = object.getString("resolution");
+            snapshot.containerLabel = object.getString("container");
+            snapshot.videoCodecLabel = object.getString("videoCodec");
+            snapshot.audioCodecLabel = object.getString("audioCodec");
+            snapshot.bitrateLabel = object.getString("bitrate");
+            snapshot.frameRateLabel = object.getString("frameRate");
+            snapshot.audioDetailsLabel = object.getString("audioDetails");
+            snapshot.primaryAudioChannels = object.optInt("channels");
+            snapshot.primaryAudioSampleRate = object.optInt("sampleRate");
+            snapshot.detailed = object.optBoolean("detailed");
+            JSONArray audio = object.optJSONArray("audioTracks");
+            if (audio != null) for (int i = 0; i < audio.length(); i++) {
+                snapshot.allAudioTrackDetails.add(audio.getString(i));
+            }
+            snapshot.fileSizeLabel = getFileSize(video.getSizeBytes());
+            snapshot.folderLabel = video.getFolderName();
+            snapshot.uriLabel = video.getContentUri().toString();
+            MEDIA_INFO_CACHE.put(key, snapshot);
+            return snapshot;
+        } catch (Exception corrupt) { return null; }
+    }
+
+    private void cacheSnapshot(VideoFile video, MediaInfoSnapshot snapshot) {
+        // Do not persist a failed/cancelled parse as a successful result.
+        if ("Unknown".equals(snapshot.qualityLabel) || "00:00".equals(snapshot.durationLabel)) return;
+        String key = LibraryPreviewCache.key(video);
+        MEDIA_INFO_CACHE.put(key, snapshot);
+        try {
+            JSONObject object = new JSONObject();
+            object.put("duration", snapshot.durationLabel).put("quality", snapshot.qualityLabel)
+                    .put("resolution", snapshot.resolutionLabel).put("container", snapshot.containerLabel)
+                    .put("videoCodec", snapshot.videoCodecLabel).put("audioCodec", snapshot.audioCodecLabel)
+                    .put("bitrate", snapshot.bitrateLabel).put("frameRate", snapshot.frameRateLabel)
+                    .put("audioDetails", snapshot.audioDetailsLabel).put("channels", snapshot.primaryAudioChannels)
+                    .put("sampleRate", snapshot.primaryAudioSampleRate).put("detailed", snapshot.detailed)
+                    .put("audioTracks", new JSONArray(snapshot.allAudioTrackDetails));
+            LibraryPreviewCache.putMetadata(context, key, object.toString());
+        } catch (Exception unavailable) { Log.w("VideoAdapter", "Details cache unavailable", unavailable); }
     }
 
     // ── Raw EBML scan for MKV audio codec IDs ───────────────────────
@@ -821,7 +962,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VideoViewHol
     // ── Utility ──────────────────────────────────────────────────────
 
     @SuppressLint("DefaultLocale")
-    private String getFileSize(long bytes) {
+    private static String getFileSize(long bytes) {
         if (bytes <= 0) return "Unknown";
         if (bytes < 1024) return bytes + " B";
         int    exp   = (int) (Math.log(bytes) / Math.log(1024));

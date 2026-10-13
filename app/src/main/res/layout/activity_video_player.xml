@@ -16,167 +16,132 @@
         android:background="@android:color/black"
         app:keep_content_on_player_reset="true"
         app:shutter_background_color="@android:color/black"
-        app:use_controller="true" />
-
-    <LinearLayout
-        android:id="@+id/top_bar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="0dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="0dp"
-        android:paddingBottom="8dp"
-        android:clipToPadding="false">
-
-        <ImageButton
-            android:id="@+id/btn_back"
-            android:layout_width="52dp"
-            android:layout_height="52dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_back"
-            android:contentDescription="Back"
-            android:scaleType="fitCenter"
-            android:padding="14dp" />
-
-        <TextView
-            android:id="@+id/tv_video_name"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="marquee"
-            android:marqueeRepeatLimit="marquee_forever"
-            android:focusable="true"
-            android:focusableInTouchMode="true"
-            android:singleLine="true"
-            android:textColor="#FFFFFF"
-            android:textSize="15sp"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.01"
-            android:layout_marginStart="2dp"
-            android:layout_marginEnd="8dp"
-            android:shadowColor="#99000000"
-            android:shadowDx="0"
-            android:shadowDy="1"
-            android:shadowRadius="4" />
-
-        <ImageButton
-            android:id="@+id/btn_rotate"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:padding="10dp"
-            android:src="@drawable/ic_rotate"
-            android:contentDescription="@string/rotate_description"
-            android:scaleType="fitCenter" />
-
-        <ImageButton
-            android:id="@+id/btn_crop"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:padding="10dp"
-            android:src="@drawable/ic_crop"
-            android:contentDescription="@string/crop_options"
-            android:scaleType="fitCenter" />
-
-        <ImageButton
-            android:id="@+id/audio_track"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:padding="10dp"
-            android:src="@drawable/ic_audio_track"
-            android:contentDescription="@string/audio_track_description"
-            android:scaleType="fitCenter" />
-
-    </LinearLayout>
-
-    <ImageButton
-        android:id="@+id/btn_screen_lock"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:layout_gravity="start|center_vertical"
-        android:layout_marginStart="8dp"
-        android:background="?android:attr/selectableItemBackgroundBorderless"
-        android:contentDescription="@string/screen_lock_description"
-        android:padding="10dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/ic_screen_lock" />
+        app:use_controller="true"
+        app:controller_layout_id="@layout/view_player_glass_controls"
+        app:animation_enabled="false"
+        app:show_timeout="0"
+        app:play_icon="@drawable/player_morph_to_play"
+        app:pause_icon="@drawable/player_morph_to_pause"
+        app:previous_icon="@drawable/player_icon_previous"
+        app:next_icon="@drawable/player_icon_next" />
 
     <LinearLayout
         android:id="@+id/gesture_feedback"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:minWidth="164dp"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:minHeight="40dp"
         android:background="@drawable/glass_surface_soft_bg"
         android:elevation="8dp"
-        android:gravity="center"
+        android:gravity="center_vertical"
         android:importantForAccessibility="no"
-        android:orientation="vertical"
-        android:paddingStart="20dp"
-        android:paddingTop="16dp"
-        android:paddingEnd="20dp"
-        android:paddingBottom="16dp"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp"
         android:visibility="gone">
 
         <ImageView
             android:id="@+id/gesture_feedback_icon"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginEnd="8dp"
             android:importantForAccessibility="no"
             android:scaleType="fitCenter" />
+
+        <LinearLayout
+            android:id="@+id/gesture_feedback_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
         <TextView
             android:id="@+id/gesture_feedback_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
+            android:fontFeatureSettings="tnum"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:maxWidth="100dp"
+            android:ellipsize="end"
             android:textColor="@color/glass_text_primary"
-            android:textSize="18sp" />
+            android:textSize="14sp" />
+
+        <ImageView
+            android:id="@+id/gesture_feedback_speed"
+            android:layout_width="22dp"
+            android:layout_height="18dp"
+            android:layout_marginStart="6dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_speed_forward"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/gesture_feedback_detail"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="3dp"
+            android:layout_marginStart="8dp"
             android:fontFamily="sans-serif"
             android:gravity="center"
-            android:maxWidth="220dp"
+            android:fontFeatureSettings="tnum"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:maxWidth="140dp"
+            android:ellipsize="end"
             android:textColor="@color/glass_text_secondary"
             android:textSize="12sp" />
+        </LinearLayout>
 
     </LinearLayout>
 
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/unlock_hint_container"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="260dp"
+        android:layout_height="48dp"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="58dp"
+        android:layout_marginLeft="16dp"
+        android:layout_marginRight="16dp"
+        android:layout_marginBottom="32dp"
         android:background="@drawable/glass_surface_soft_bg"
-        android:gravity="center_vertical"
         android:importantForAccessibility="no"
-        android:orientation="horizontal"
-        android:paddingStart="16dp"
-        android:paddingTop="10dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="10dp"
+        android:layoutDirection="ltr"
         android:visibility="gone">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:id="@+id/unlock_swipe_label"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginStart="48dp"
+            android:layout_marginEnd="12dp"
             android:fontFamily="sans-serif-medium"
+            android:gravity="center"
             android:text="@string/unlock_hint"
             android:textColor="@color/glass_text_primary"
-            android:textSize="13sp" />
-    </LinearLayout>
+            android:textSize="13sp"
+            android:maxLines="1"
+            app:autoSizeTextType="uniform"
+            app:autoSizeMinTextSize="10sp"
+            app:autoSizeMaxTextSize="13sp"
+            app:autoSizeStepGranularity="1sp" />
+
+        <ImageView
+            android:id="@+id/unlock_swipe_thumb"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="left|center_vertical"
+            android:layout_marginLeft="4dp"
+            android:background="@drawable/unlock_swipe_thumb_bg"
+            android:padding="10dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_screen_lock"
+            app:tint="@color/glass_text_primary" />
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/overlay_container"

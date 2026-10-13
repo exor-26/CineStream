@@ -347,7 +347,8 @@ final class ProgressiveCompatibilityManager {
                     context,
                     fallbackDecoder,
                     Clock.DEFAULT,
-                    null
+                    CineMediaSources.factory(context),
+                    new androidx.media3.datasource.DataSourceBitmapLoader(context)
             );
             Transformer newTransformer = new Transformer.Builder(context)
                     .setAssetLoaderFactory(assetLoaderFactory)

@@ -4,6 +4,7 @@
     <color name="glass_text_secondary">#BFC8D8</color>
     <color name="glass_text_tertiary">#96A3B8</color>
     <color name="glass_text_accent">#9FB7FF</color>
+    <color name="media_permission_button_text">#172033</color>
     <color name="glass_text_selected">#B8C7FF</color>
     <color name="glass_icon_tint">#F5F7FF</color>
     <color name="glass_divider">#2EFFFFFF</color>

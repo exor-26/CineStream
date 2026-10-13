@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/glass_player_controls"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+    <!-- Media3 retains its existing single dimming surface. -->
+    <View android:id="@id/exo_controls_background" android:layout_width="0dp"
+        android:layout_height="0dp" android:background="@color/exo_black_opacity_60"/>
+    <FrameLayout android:id="@id/exo_top_controls" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_gravity="top">
+        <LinearLayout android:id="@+id/top_bar" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="horizontal"
+            android:gravity="center_vertical" android:padding="16dp" android:clipToPadding="false">
+            <com.exor.cinestream.GlassPlayerButton android:id="@+id/btn_back"
+                style="@style/CinePlayerButton" android:src="@drawable/ic_back"
+                android:contentDescription="@string/player_back_description"/>
+            <TextView android:id="@+id/tv_video_name" android:layout_width="0dp"
+                android:layout_height="48dp" android:layout_weight="1"
+                android:layout_marginStart="12dp" android:layout_marginEnd="12dp"
+                android:gravity="center_vertical" android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever" android:singleLine="true"
+                android:fontFamily="sans-serif-medium" android:textSize="14sp"
+                android:textColor="@android:color/white" android:shadowColor="#B3000000"
+                android:shadowRadius="2" android:shadowDy="1"/>
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="48dp"
+                android:orientation="horizontal" android:background="@drawable/glass_surface_soft_bg">
+                <com.exor.cinestream.GlassPlayerButton android:id="@+id/btn_rotate"
+                    style="@style/CinePlayerGroupButton" android:src="@drawable/ic_rotate" app:tint="@null"
+                    android:contentDescription="@string/rotate_description"/>
+                <com.exor.cinestream.GlassPlayerButton android:id="@+id/btn_crop"
+                    style="@style/CinePlayerGroupButton" android:src="@drawable/ic_crop"
+                    android:contentDescription="@string/crop_options"/>
+                <com.exor.cinestream.GlassPlayerButton android:id="@+id/audio_track"
+                    style="@style/CinePlayerGroupButton" android:src="@drawable/ic_audio_track" app:tint="@null"
+                    android:contentDescription="@string/audio_track_description"/>
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+    <com.exor.cinestream.AdaptivePlayerTransport android:id="@id/exo_center_controls"
+        android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center">
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="64dp" android:gravity="center"
+        android:orientation="horizontal" android:layoutDirection="ltr">
+        <com.exor.cinestream.GlassPlayerButton android:id="@id/exo_prev" style="@style/CinePlayerButton"
+            android:layout_marginEnd="8dp" android:src="@drawable/player_icon_previous"
+            android:contentDescription="@string/exo_controls_previous_description"/>
+        <com.exor.cinestream.GlassSeekButton android:id="@id/exo_rew_with_amount"
+            style="@style/CinePlayerSeekButton" android:layout_marginEnd="8dp"
+            android:contentDescription="@string/exo_controls_rewind_description"/>
+        <com.exor.cinestream.GlassPlayerButton android:id="@id/exo_play_pause" style="@style/CinePlayerButton"
+            android:layout_width="64dp" android:layout_height="64dp" android:padding="18dp"
+            android:src="@drawable/player_icon_play" app:tint="@color/glass_text_accent"
+            android:contentDescription="@string/exo_controls_play_description"/>
+        <com.exor.cinestream.GlassSeekButton android:id="@id/exo_ffwd_with_amount"
+            style="@style/CinePlayerSeekButton" android:layout_marginStart="8dp"
+            android:contentDescription="@string/exo_controls_fastforward_description"/>
+        <com.exor.cinestream.GlassPlayerButton android:id="@id/exo_next" style="@style/CinePlayerButton"
+            android:layout_marginStart="8dp" android:src="@drawable/player_icon_next"
+            android:contentDescription="@string/exo_controls_next_description"/>
+    </LinearLayout>
+    </com.exor.cinestream.AdaptivePlayerTransport>
+    <!-- Transparent coordinator; only the seekbar, time pill and Settings have glass surfaces. -->
+    <LinearLayout android:id="@+id/glass_player_dock" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_gravity="bottom" android:orientation="vertical"
+        android:layout_marginStart="16dp" android:layout_marginEnd="16dp" android:layout_marginBottom="16dp">
+        <FrameLayout android:id="@+id/player_seek_surface" android:layout_width="match_parent" android:layout_height="48dp">
+            <View android:id="@+id/player_seek_glass" android:layout_width="match_parent"
+                android:layout_height="40dp" android:layout_gravity="center_vertical"
+                android:background="@drawable/glass_surface_soft_bg" android:importantForAccessibility="no"/>
+            <androidx.media3.ui.DefaultTimeBar android:id="@id/exo_progress"
+                android:layout_width="match_parent" android:layout_height="48dp"
+                android:paddingStart="12dp" android:paddingEnd="12dp"
+                android:clickable="true" android:focusable="true"
+                app:touch_target_height="48dp" app:bar_height="3dp"
+                app:scrubber_enabled_size="10dp" app:scrubber_dragged_size="14dp"
+                app:played_color="@color/glass_text_accent" app:scrubber_color="@color/glass_text_accent"
+                app:buffered_color="@color/glass_text_secondary" app:unplayed_color="@color/glass_divider"/>
+        </FrameLayout>
+        <FrameLayout android:id="@id/exo_bottom_bar" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:minHeight="48dp">
+            <com.exor.cinestream.AdaptivePlayerTimePill android:id="@id/exo_time" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:minHeight="36dp" android:layout_gravity="start|center_vertical"
+                android:paddingStart="12dp" android:paddingEnd="12dp" android:paddingTop="3dp" android:paddingBottom="3dp"
+                android:background="@drawable/glass_surface_soft_bg"
+                android:gravity="center_vertical" android:layoutDirection="ltr">
+                <TextView android:id="@id/exo_position" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:textSize="12sp" android:fontFeatureSettings="tnum"
+                    android:singleLine="true" android:textColor="@color/glass_text_primary" android:text="00:00"/>
+                <TextView android:id="@+id/player_time_separator" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp" android:layout_marginEnd="8dp" android:text="·"
+                    android:textSize="12sp" android:textColor="@color/glass_text_secondary" android:importantForAccessibility="no"/>
+                <TextView android:id="@id/exo_duration" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:textSize="12sp" android:fontFeatureSettings="tnum"
+                    android:singleLine="true" android:textColor="@color/glass_text_secondary" android:text="00:00"/>
+            </com.exor.cinestream.AdaptivePlayerTimePill>
+            <FrameLayout android:id="@id/exo_basic_controls" android:layout_width="48dp"
+                android:layout_height="48dp" android:layout_gravity="end|center_vertical">
+                <!-- Preserve native menu bindings and the visible button's anchor geometry. -->
+                <View android:id="@id/exo_settings" android:layout_width="48dp" android:layout_height="48dp"
+                    android:visibility="invisible" android:importantForAccessibility="no"/>
+                <View android:id="@id/exo_playback_speed" android:layout_width="48dp" android:layout_height="48dp"
+                    android:visibility="invisible" android:importantForAccessibility="no"/>
+                <com.exor.cinestream.GlassPlayerButton android:id="@+id/btn_player_settings"
+                    style="@style/CinePlayerSettingsButton" android:src="@drawable/player_icon_settings"
+                    android:contentDescription="@string/exo_controls_settings_description"/>
+            </FrameLayout>
+        </FrameLayout>
+    </LinearLayout>
+</FrameLayout>

@@ -17,6 +17,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.ViewTreeObserver;
@@ -33,6 +34,7 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
@@ -56,10 +58,12 @@ import java.util.Map;
 public class MainActivity extends AppCompatActivity implements VideoAdapter.Listener {
 
     private static final long SEARCH_DEBOUNCE_MS = 140L;
+    private static final String STATE_PERMISSION_REQUEST = "media_permission_request_in_flight";
 
     private enum ViewState { ALL_VIDEOS, FOLDER_LIST, FOLDER_CONTENTS }
     private enum PendingMediaAction { NONE, DELETE, RENAME }
     private enum SortMode { NAME, DATE, DURATION }
+    private enum MediaReadAccess { NONE, SELECTED, FULL }
 
     private ViewState currentState = ViewState.ALL_VIDEOS;
 
@@ -72,6 +76,12 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private ImageView toggleIcon;
 
     private BlurView searchCard;
+    private View permissionPanel;
+    private TextView permissionNote;
+    private TextView permissionAllowButton;
+    private BlurView mediaAccessNotice;
+    private MediaReadAccess mediaReadAccess = MediaReadAccess.NONE;
+    private boolean permissionRequestInFlight;
     private EditText searchInput;
     private ImageButton searchClear;
     private ImageButton sortBtn;
@@ -82,10 +92,10 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private TextView sortByDuration;
     private SortMode sortMode = SortMode.DATE;
     private BlurView selectionActionBar;
-    private ImageButton selectionRename;
-    private ImageButton selectionShare;
-    private ImageButton selectionDelete;
-    private ImageButton selectionDetails;
+    private View selectionRename;
+    private View selectionShare;
+    private View selectionDelete;
+    private View selectionDetails;
     private VideoAdapter selectionAdapter;
     private final List<VideoFile> selectedVideos = new ArrayList<>();
 
@@ -106,9 +116,16 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private int lastNavBarInset = 0;
     private boolean initialHeaderPaddingApplied = false;
+    private final ViewTreeObserver.OnPreDrawListener scrollOpacityPreDrawListener = () -> {
+        // Returning from playback can rebind/reorder rows without any scroll event.
+        // Use their final on-screen positions before drawing, including item animations.
+        applyScrollOpacity(recyclerView);
+        return true;
+    };
 
     private boolean libraryLoaded = false;
     private boolean libraryLoadInProgress = false;
+    private int libraryLoadGeneration;
     private boolean libraryDirty = true;
     private boolean playbackUiDirty = false;
     private ContentObserver mediaObserver;
@@ -121,14 +138,13 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private String pendingRenameName;
     private PendingMediaAction pendingMediaAction = PendingMediaAction.NONE;
 
-    private final ActivityResultLauncher<String> requestPermissionLauncher =
-            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
-                if (isGranted) {
+    private final ActivityResultLauncher<String[]> requestPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
+                permissionRequestInFlight = false;
+                invalidateLibraryLoad();
+                if (updateMediaAccessUi()) {
                     registerMediaObserver();
-                    libraryDirty = true;
                     loadVideoFiles();
-                } else {
-                    GlassUi.showToast(this, "Permission denied.");
                 }
             });
 
@@ -166,6 +182,8 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        permissionRequestInFlight = savedInstanceState != null
+                && savedInstanceState.getBoolean(STATE_PERMISSION_REQUEST, false);
 
         mainBlurTarget = findViewById(R.id.main_blur_target);
         titleCard = findViewById(R.id.titleCard);
@@ -177,6 +195,14 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         recyclerView.setVisibility(View.INVISIBLE);
 
         searchCard = findViewById(R.id.searchCard);
+        permissionPanel = findViewById(R.id.permissionPanel);
+        permissionNote = findViewById(R.id.permissionNote);
+        permissionAllowButton = findViewById(R.id.permissionAllowButton);
+        mediaAccessNotice = findViewById(R.id.mediaAccessNotice);
+        permissionAllowButton.setOnClickListener(v -> requestMediaAccess());
+        findViewById(R.id.manageMediaAccess).setOnClickListener(v -> requestMediaAccess());
+        mediaAccessNotice.addOnLayoutChangeListener((v, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> updateLibraryTopPadding());
         searchInput = findViewById(R.id.searchInput);
         searchClear = findViewById(R.id.searchClear);
         sortBtn = findViewById(R.id.sortBtn);
@@ -257,6 +283,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 applyScrollOpacity(rv);
             }
         });
+        recyclerView.getViewTreeObserver().addOnPreDrawListener(scrollOpacityPreDrawListener);
 
         customizeStatusBar();
         checkPermissionsAndLoadFiles();
@@ -270,6 +297,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         setupGlassView(titleCard, blurRadius);
         setupGlassView(aboutBtn, blurRadius);
         setupGlassView(searchCard, blurRadius);
+        setupGlassView(mediaAccessNotice, blurRadius);
         setupGlassView(toggleViewBtn, blurRadius);
         setupGlassView(selectionActionBar, blurRadius);
         setupGlassView(sortPopup, blurRadius);
@@ -284,6 +312,10 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     private void setupRecyclerView() {
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         recyclerView.setHasFixedSize(true);
+        if (recyclerView.getItemAnimator() instanceof androidx.recyclerview.widget.SimpleItemAnimator) {
+            ((androidx.recyclerview.widget.SimpleItemAnimator) recyclerView.getItemAnimator())
+                    .setSupportsChangeAnimations(false);
+        }
 
         videoAdapter = new VideoAdapter(this, videoFiles, this);
         filteredAdapter = new VideoAdapter(this, filteredFiles, this);
@@ -534,13 +566,14 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                         if (selectedVideos.isEmpty()) {
                             selectionActionBar.setVisibility(View.GONE);
                             selectionActionBar.setTranslationY(0f);
-                            toggleViewBtn.setVisibility(View.VISIBLE);
+                            toggleViewBtn.setVisibility(hasMediaReadPermission()
+                                    ? View.VISIBLE : View.GONE);
                         }
                     })
                     .start();
         } else {
             selectionActionBar.setVisibility(View.GONE);
-            toggleViewBtn.setVisibility(View.VISIBLE);
+            toggleViewBtn.setVisibility(hasMediaReadPermission() ? View.VISIBLE : View.GONE);
         }
     }
 
@@ -645,26 +678,35 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
             int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
             int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
             lastNavBarInset = navBarHeight;
+            float density = getResources().getDisplayMetrics().density;
+            int headerGap = Math.round(12f * density);
+            int bottomGap = Math.round(24f * density);
 
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) titleCard.getLayoutParams();
-            lp.topMargin = statusBarHeight + 12;
+            lp.topMargin = statusBarHeight + headerGap;
             titleCard.setLayoutParams(lp);
 
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams tlp =
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) toggleViewBtn.getLayoutParams();
-            tlp.bottomMargin = navBarHeight + 24;
+            tlp.bottomMargin = navBarHeight + bottomGap;
             toggleViewBtn.setLayoutParams(tlp);
 
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams selectionLp =
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)
                             selectionActionBar.getLayoutParams();
-            selectionLp.bottomMargin = navBarHeight + 24;
+            selectionLp.bottomMargin = navBarHeight + bottomGap;
             selectionActionBar.setLayoutParams(selectionLp);
+
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams permissionLp =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)
+                            permissionPanel.getLayoutParams();
+            permissionLp.bottomMargin = navBarHeight + bottomGap;
+            permissionPanel.setLayoutParams(permissionLp);
 
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams alp =
                     (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) aboutBtn.getLayoutParams();
-            alp.topMargin = statusBarHeight + 12;
+            alp.topMargin = statusBarHeight + headerGap;
             aboutBtn.setLayoutParams(alp);
 
             titleCard.getViewTreeObserver().addOnGlobalLayoutListener(
@@ -685,8 +727,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                                             public void onGlobalLayout() {
                                                 int searchBottom = searchCard.getBottom();
                                                 if (searchBottom > 0) {
-                                                    int gap2 = (int) (8 * getResources().getDisplayMetrics().density);
-                                                    recyclerView.setPadding(0, searchBottom + gap2, 0, navBarHeight);
+                                                    updateLibraryTopPadding();
                                                     recyclerView.scrollToPosition(0);
                                                     searchCard.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                                                 }
@@ -704,8 +745,15 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     @Override
     protected void onResume() {
         super.onResume();
-        if (!hasMediaReadPermission()) {
+        CineThumbnailProbe.resume();
+        if (!updateMediaAccessUi()) {
             return;
+        }
+
+        // Selected media may change while the app is backgrounded, without a permission change.
+        if (mediaReadAccess == MediaReadAccess.SELECTED) {
+            invalidateLibraryLoad();
+            recyclerView.setVisibility(View.INVISIBLE);
         }
 
         if (!libraryLoaded) {
@@ -728,7 +776,17 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        outState.putBoolean(STATE_PERMISSION_REQUEST, permissionRequestInFlight);
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override
     protected void onDestroy() {
+        if (recyclerView != null && recyclerView.getViewTreeObserver().isAlive()) {
+            recyclerView.getViewTreeObserver()
+                    .removeOnPreDrawListener(scrollOpacityPreDrawListener);
+        }
         searchGeneration++;
         if (pendingSearchRunnable != null) {
             mainHandler.removeCallbacks(pendingSearchRunnable);
@@ -765,11 +823,12 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     private void refreshVideoAdapter(VideoAdapter adapter) {
         if (adapter != null && adapter.getItemCount() > 0) {
-            adapter.notifyItemRangeChanged(0, adapter.getItemCount());
+            adapter.notifyItemRangeChanged(0, adapter.getItemCount(), VideoAdapter.PRESENTATION_PAYLOAD);
         }
     }
 
     private void showAllVideos() {
+        if (!updateMediaAccessUi()) return;
         if (selectionAdapter != null) {
             exitSelectionMode();
         }
@@ -777,7 +836,10 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         currentFolder = null;
         currentState = ViewState.ALL_VIDEOS;
         toggleIcon.setImageResource(R.drawable.folder);
+        toggleViewBtn.setContentDescription(getString(R.string.show_folders));
         searchCard.setVisibility(View.VISIBLE);
+        mediaAccessNotice.setVisibility(mediaReadAccess == MediaReadAccess.SELECTED
+                ? View.VISIBLE : View.GONE);
 
         String query = currentSearchQuery();
         if (query.isEmpty()) {
@@ -787,12 +849,11 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         }
 
         recyclerView.scrollToPosition(0);
-        int gap = (int) (8 * getResources().getDisplayMetrics().density);
-        recyclerView.setPadding(0, searchCard.getBottom() + gap,
-                recyclerView.getPaddingRight(), recyclerView.getPaddingBottom());
+        recyclerView.post(this::updateLibraryTopPadding);
     }
 
     private void showFolderList() {
+        if (!updateMediaAccessUi()) return;
         if (selectionAdapter != null) {
             exitSelectionMode();
         }
@@ -800,7 +861,9 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
         currentFolder = null;
         currentState = ViewState.FOLDER_LIST;
         toggleIcon.setImageResource(R.drawable.video);
+        toggleViewBtn.setContentDescription(getString(R.string.show_videos));
         searchCard.setVisibility(View.GONE);
+        mediaAccessNotice.setVisibility(View.GONE);
         searchInput.setText("");
 
         int gap = (int) (8 * getResources().getDisplayMetrics().density);
@@ -817,12 +880,14 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void showFolderContents(FolderItem folder) {
+        if (!updateMediaAccessUi()) return;
         if (selectionAdapter != null) {
             exitSelectionMode();
         }
         hideSortPopup();
         currentFolder = folder;
         currentState = ViewState.FOLDER_CONTENTS;
+        mediaAccessNotice.setVisibility(View.GONE);
         int gap = (int) (8 * getResources().getDisplayMetrics().density);
         recyclerView.setPadding(0, titleCard.getBottom() + gap,
                 recyclerView.getPaddingRight(), recyclerView.getPaddingBottom());
@@ -860,19 +925,28 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void applyScrollOpacity(RecyclerView rv) {
-        if (titleCard == null) return;
+        if (rv == null || titleCard == null || titleCard.getHeight() <= 0) return;
         float fadeEnd = titleCard.getBottom();
         float fadeZone = titleCard.getHeight();
         for (int i = 0; i < rv.getChildCount(); i++) {
             View child = rv.getChildAt(i);
+            // ItemAnimator owns the outer row alpha. Fade only the inner content so a move/change
+            // animation cannot reset header opacity or flash a freshly selected row at full brightness.
+            View content = child.findViewById(R.id.library_row_content);
+            if (content == null) continue;
             float childTop = child.getY();
+            float alpha;
             if (childTop >= fadeEnd) {
-                child.setAlpha(1f);
+                alpha = 1f;
             } else if (childTop <= fadeEnd - fadeZone) {
-                child.setAlpha(0.08f);
+                alpha = 0.08f;
             } else {
                 float fraction = (childTop - (fadeEnd - fadeZone)) / fadeZone;
-                child.setAlpha(Math.max(0.08f, fraction));
+                alpha = Math.max(0.08f, fraction);
+            }
+            // Keep stable frames cheap: unchanged opacity must not invalidate the view.
+            if (Float.compare(content.getAlpha(), alpha) != 0) {
+                content.setAlpha(alpha);
             }
         }
     }
@@ -919,8 +993,16 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private void checkPermissionsAndLoadFiles() {
-        if (!hasMediaReadPermission()) {
-            requestPermissionLauncher.launch(getReadPermission());
+        // Launch Android's prompt once on first opening; denials use the recovery screen.
+        android.content.SharedPreferences accessPreferences =
+                getSharedPreferences("media_access", MODE_PRIVATE);
+        if (!hasMediaReadPermission()
+                && !accessPreferences.getBoolean("initial_permission_prompt_started", false)
+                && !accessPreferences.getBoolean("permission_requested", false)) {
+            requestMediaAccess();
+            return;
+        }
+        if (!updateMediaAccessUi()) {
             return;
         }
         registerMediaObserver();
@@ -928,8 +1010,131 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     }
 
     private boolean hasMediaReadPermission() {
-        return ContextCompat.checkSelfPermission(this, getReadPermission())
-                == PackageManager.PERMISSION_GRANTED;
+        return getMediaReadAccess() != MediaReadAccess.NONE;
+    }
+
+    private MediaReadAccess getMediaReadAccess() {
+        if (ContextCompat.checkSelfPermission(this, getReadPermission())
+                == PackageManager.PERMISSION_GRANTED) {
+            return MediaReadAccess.FULL;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && ContextCompat.checkSelfPermission(this,
+                        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+                == PackageManager.PERMISSION_GRANTED) {
+            return MediaReadAccess.SELECTED;
+        }
+        return MediaReadAccess.NONE;
+    }
+
+    private boolean permissionNeedsSettings() {
+        return getMediaReadAccess() == MediaReadAccess.NONE
+                && getSharedPreferences("media_access", MODE_PRIVATE)
+                        .getBoolean("permission_requested", false)
+                && !ActivityCompat.shouldShowRequestPermissionRationale(this, getReadPermission());
+    }
+
+    private void requestMediaAccess() {
+        if (permissionRequestInFlight) return;
+        if (permissionNeedsSettings()) {
+            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + getPackageName())));
+            return;
+        }
+        permissionRequestInFlight = true;
+        permissionAllowButton.setEnabled(false);
+        getSharedPreferences("media_access", MODE_PRIVATE).edit()
+                .putBoolean("initial_permission_prompt_started", true)
+                .putBoolean("permission_requested", true).apply();
+        updateMediaAccessUi();
+        requestPermissionLauncher.launch(Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                ? new String[]{Manifest.permission.READ_MEDIA_VIDEO,
+                        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
+                : new String[]{getReadPermission()});
+    }
+
+    private void invalidateLibraryLoad() {
+        libraryLoadGeneration++;
+        libraryLoadInProgress = false;
+        libraryLoaded = false;
+        libraryDirty = true;
+        if (selectionAdapter != null) exitSelectionMode();
+        searchGeneration++;
+        if (pendingSearchRunnable != null) {
+            mainHandler.removeCallbacks(pendingSearchRunnable);
+            pendingSearchRunnable = null;
+        }
+        videoListDiffer.cancelPending();
+        filteredListDiffer.cancelPending();
+    }
+
+    private boolean updateMediaAccessUi() {
+        MediaReadAccess access = getMediaReadAccess();
+        if (mediaReadAccess != access) {
+            invalidateLibraryLoad();
+            mediaReadAccess = access;
+        }
+        boolean available = access != MediaReadAccess.NONE;
+        permissionPanel.setVisibility(available || permissionRequestInFlight
+                ? View.GONE : View.VISIBLE);
+        permissionAllowButton.setEnabled(!permissionRequestInFlight);
+        sortBtn.setVisibility(available ? View.VISIBLE : View.INVISIBLE);
+        if (!available) {
+            hideSortPopup();
+            if (selectionAdapter != null) exitSelectionMode();
+            searchGeneration++;
+            if (pendingSearchRunnable != null) {
+                mainHandler.removeCallbacks(pendingSearchRunnable);
+                pendingSearchRunnable = null;
+            }
+            searchInput.clearFocus();
+            recyclerView.setVisibility(View.INVISIBLE);
+            searchCard.setVisibility(View.INVISIBLE);
+            mediaAccessNotice.setVisibility(View.GONE);
+            toggleViewBtn.setVisibility(View.GONE);
+            boolean needsSettings = permissionNeedsSettings();
+            permissionAllowButton.setText(needsSettings
+                    ? R.string.media_permission_settings : R.string.media_permission_allow);
+            permissionNote.setText(needsSettings
+                    ? R.string.media_permission_settings_note : R.string.media_permission_note);
+            if (mediaObserver != null) {
+                try {
+                    getContentResolver().unregisterContentObserver(mediaObserver);
+                } catch (Exception ignored) {
+                }
+                mediaObserver = null;
+            }
+        } else {
+            // Remember requests only; always obtain the actual access state from Android.
+            if (!permissionRequestInFlight) {
+                getSharedPreferences("media_access", MODE_PRIVATE).edit()
+                        .putBoolean("initial_permission_prompt_started", true)
+                        .putBoolean("permission_requested", false).apply();
+            }
+            searchCard.setVisibility(currentState == ViewState.ALL_VIDEOS
+                    ? View.VISIBLE : View.GONE);
+            mediaAccessNotice.setVisibility(access == MediaReadAccess.SELECTED
+                    && currentState == ViewState.ALL_VIDEOS ? View.VISIBLE : View.GONE);
+            toggleViewBtn.setVisibility(selectedVideos.isEmpty() ? View.VISIBLE : View.GONE);
+            if (!libraryLoaded) recyclerView.setVisibility(View.INVISIBLE);
+        }
+        recyclerView.post(this::updateLibraryTopPadding);
+        return available;
+    }
+
+    private void updateLibraryTopPadding() {
+        int anchorBottom = currentState == ViewState.ALL_VIDEOS
+                ? searchCard.getBottom() : titleCard.getBottom();
+        if (mediaAccessNotice.getVisibility() == View.VISIBLE) {
+            anchorBottom = Math.max(anchorBottom, mediaAccessNotice.getBottom());
+        }
+        if (anchorBottom <= 0) return;
+        int top = anchorBottom + (int) (8 * getResources().getDisplayMetrics().density);
+        if (recyclerView.getPaddingTop() != top
+                || recyclerView.getPaddingBottom() != lastNavBarInset) {
+            recyclerView.setPadding(0, top, recyclerView.getPaddingRight(),
+                    lastNavBarInset);
+        }
     }
 
     private String getReadPermission() {
@@ -968,12 +1173,17 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
 
     @SuppressLint("Range")
     private void loadVideoFiles() {
+        if (!hasMediaReadPermission()) {
+            updateMediaAccessUi();
+            return;
+        }
         if (libraryLoadInProgress) {
             return;
         }
 
         libraryLoadInProgress = true;
         libraryDirty = false;
+        final int generation = ++libraryLoadGeneration;
 
         final Uri collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
         final String[] projection = buildProjection();
@@ -1020,12 +1230,19 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 errorMessage = e.getMessage();
             }
 
+            VideoAdapter.preloadCachedMetadata(getApplicationContext(), loadedFiles);
             final String finalErrorMessage = errorMessage;
             mainHandler.post(() -> {
+                if (generation != libraryLoadGeneration) return;
                 libraryLoadInProgress = false;
 
                 if (isFinishing()
                         || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed())) {
+                    return;
+                }
+
+                if (!hasMediaReadPermission()) {
+                    updateMediaAccessUi();
                     return;
                 }
 
@@ -1039,12 +1256,17 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
                 libraryLoaded = true;
                 sortVideos(loadedFiles);
                 videoListDiffer.submit(loadedFiles,
-                        () -> onLibraryListCommitted(loadedFiles.isEmpty()));
+                        () -> {
+                            if (generation == libraryLoadGeneration) {
+                                onLibraryListCommitted(loadedFiles.isEmpty());
+                            }
+                        });
             });
         });
     }
 
     private void onLibraryListCommitted(boolean empty) {
+        if (!updateMediaAccessUi()) return;
         recyclerView.setVisibility(View.VISIBLE);
 
         if (empty) {
@@ -1147,6 +1369,7 @@ public class MainActivity extends AppCompatActivity implements VideoAdapter.List
     @UnstableApi
     @Override
     public void onPlayVideo(VideoFile videoFile, List<VideoFile> playlist, int position) {
+        CineThumbnailProbe.cancelActive();
         playbackUiDirty = true;
         Intent intent = new Intent(this, VideoPlayerActivity.class);
         intent.putExtra(VideoPlayerActivity.EXTRA_VIDEO_URI, videoFile.getContentUri().toString());

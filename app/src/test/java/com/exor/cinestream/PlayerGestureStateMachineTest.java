@@ -7,6 +7,49 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class PlayerGestureStateMachineTest {
+    @Test public void inactiveSeekCleanupDoesNotHidePinchPercentage() {
+        assertFalse(PlayerGestureStateMachine.shouldHideSeekFeedback(true, false, false));
+    }
+
+    @Test public void cancellingAnActiveSeekHidesItsPreview() {
+        assertTrue(PlayerGestureStateMachine.shouldHideSeekFeedback(true, true, false));
+    }
+
+    @Test public void seekCleanupPreservesActiveSpeedFeedback() {
+        assertFalse(PlayerGestureStateMachine.shouldHideSeekFeedback(true, true, true));
+    }
+
+    @Test public void seekCleanupWithoutHideRequestPreservesFeedback() {
+        assertFalse(PlayerGestureStateMachine.shouldHideSeekFeedback(false, true, false));
+    }
+
+    @Test public void centeredSliderHandleCanStartUnlockOutsideLegacyLeftZone() {
+        PlayerGestureStateMachine machine = new PlayerGestureStateMachine();
+        machine.setLocked(true);
+        assertEquals(PlayerGestureStateMachine.Owner.UNLOCK_SWIPE,
+                machine.beginGesture(550, 900, 1000, 1000, true));
+        assertEquals(PlayerGestureStateMachine.UnlockProgress.COMPLETE,
+                machine.updateUnlock(800, 900, 8, 200, 80));
+        assertTrue(machine.finishUnlockGesture());
+    }
+
+    @Test public void centeredSliderStillRejectsVerticalSwipes() {
+        PlayerGestureStateMachine machine = new PlayerGestureStateMachine();
+        machine.setLocked(true);
+        machine.beginGesture(550, 900, 1000, 1000, true);
+        assertEquals(PlayerGestureStateMachine.UnlockProgress.CANCELLED,
+                machine.updateUnlock(570, 750, 8, 200, 80));
+        assertFalse(machine.finishUnlockGesture());
+    }
+
+    @Test public void centeredSliderStillRejectsMultiplePointers() {
+        PlayerGestureStateMachine machine = new PlayerGestureStateMachine();
+        machine.setLocked(true);
+        machine.beginGesture(550, 900, 1000, 1000, true);
+        machine.onPointerCountChanged(2);
+        assertFalse(machine.finishUnlockGesture());
+    }
+
 
     @Test
     public void movementInsideTouchSlopRemainsPending() {

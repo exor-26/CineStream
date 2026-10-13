@@ -22,8 +22,8 @@ android {
         minSdk 24
         //noinspection EditedTargetSdkVersion
         targetSdk 36
-        versionCode 94
-        versionName "9.6.2"
+        versionCode 96
+        versionName "9.7.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 

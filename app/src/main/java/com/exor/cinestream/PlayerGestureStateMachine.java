@@ -43,6 +43,10 @@ final class PlayerGestureStateMachine {
         return owner;
     }
 
+    static boolean shouldHideSeekFeedback(boolean requested, boolean seekWasActive, boolean speedActive) {
+        return requested && seekWasActive && !speedActive;
+    }
+
     float getDownX() {
         return downX;
     }
@@ -52,11 +56,15 @@ final class PlayerGestureStateMachine {
     }
 
     Owner beginGesture(float x, float y, float width, float height) {
+        return beginGesture(x, y, width, height, false);
+    }
+
+    Owner beginGesture(float x, float y, float width, float height, boolean unlockHandleTouched) {
         downX = x;
         downY = y;
         unlockThresholdReached = false;
         if (locked) {
-            owner = isUnlockStart(x, y, width, height)
+            owner = (unlockHandleTouched || isUnlockStart(x, y, width, height))
                     ? Owner.UNLOCK_SWIPE
                     : Owner.BLOCKED;
         } else {

@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.google.android.material.card.MaterialCardView
+<FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/card_root"
-    app:rippleColor="@android:color/transparent"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginStart="12dp"
     android:layout_marginEnd="12dp"
     android:layout_marginTop="5dp"
-    android:layout_marginBottom="5dp"
+    android:layout_marginBottom="5dp">
+
+<com.google.android.material.card.MaterialCardView
+    android:id="@+id/library_row_content"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    app:rippleColor="@android:color/transparent"
     app:cardCornerRadius="20dp"
     app:cardElevation="0dp"
     app:cardBackgroundColor="@android:color/transparent"
@@ -63,23 +67,22 @@
 
             </com.google.android.material.card.MaterialCardView>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="3dp"
-                android:layout_gravity="bottom"
-                android:layout_marginStart="11dp"
-                android:layout_marginEnd="11dp"
-                android:background="#33FFFFFF" />
-
-            <View
+            <ProgressBar
                 android:id="@+id/video_progress"
+                style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="3dp"
                 android:layout_gravity="bottom"
                 android:layout_marginStart="11dp"
                 android:layout_marginEnd="11dp"
-                android:background="#7C4DFF"
-                android:visibility="gone" />
+                android:padding="0dp"
+                android:importantForAccessibility="no"
+                android:indeterminate="false"
+                android:minHeight="3dp"
+                android:maxHeight="3dp"
+                android:max="1000"
+                android:progress="0"
+                android:progressDrawable="@drawable/progress_bar_purple" />
 
             <TextView
                 android:id="@+id/video_quality"
@@ -171,3 +174,4 @@
     </LinearLayout>
 
 </com.google.android.material.card.MaterialCardView>
+</FrameLayout>

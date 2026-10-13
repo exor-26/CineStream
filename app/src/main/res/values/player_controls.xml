@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="cineGlassPressedColor" format="color"/>
+    <style name="CinePlayerSettingsPopup">
+        <item name="android:windowEnterAnimation">@anim/player_settings_enter</item>
+        <item name="android:windowExitAnimation">@anim/player_settings_exit</item>
+    </style>
+    <style name="CinePlayerButton">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">@drawable/player_glass_circle_ripple</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:focusable">true</item>
+        <item name="android:clickable">true</item>
+        <item name="tint">@color/glass_icon_tint</item>
+    </style>
+    <style name="CinePlayerGroupButton" parent="CinePlayerButton">
+        <item name="android:background">@drawable/player_control_ripple</item>
+    </style>
+    <style name="CinePlayerSettingsButton" parent="CinePlayerButton">
+        <item name="android:background">@drawable/player_compact_circle_ripple</item>
+        <item name="android:padding">14dp</item>
+    </style>
+    <style name="CinePlayerSeekButton">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">@drawable/player_glass_circle_ripple</item>
+        <item name="android:textColor">@color/glass_icon_tint</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:focusable">true</item>
+        <item name="android:clickable">true</item>
+    </style>
+</resources>

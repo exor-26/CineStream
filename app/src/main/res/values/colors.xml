@@ -15,6 +15,7 @@
     <color name="glass_text_secondary">#566277</color>
     <color name="glass_text_tertiary">#748095</color>
     <color name="glass_text_accent">#5A3DB6</color>
+    <color name="media_permission_button_text">#FFFFFF</color>
     <color name="glass_text_selected">#4B2AA7</color>
     <color name="glass_icon_tint">#222B3A</color>
     <color name="glass_divider">#24151B27</color>

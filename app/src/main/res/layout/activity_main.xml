@@ -25,26 +25,98 @@
             android:clipToPadding="false" />
     </eightbitlab.com.blurview.BlurTarget>
 
+    <include
+        android:id="@+id/permissionPanel"
+        layout="@layout/view_media_permission"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="24dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/titleCard"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <eightbitlab.com.blurview.BlurView
+        android:id="@+id/mediaAccessNotice"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/glass_blur_surface_bg"
+        android:clipToOutline="true"
+        android:visibility="gone"
+        app:blurOverlayColor="@color/main_glass_overlay_soft"
+        app:layout_constraintTop_toBottomOf="@id/searchCard"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="14dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingEnd="8dp"
+                android:text="@string/media_permission_selected"
+                android:textColor="@color/glass_text_secondary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/manageMediaAccess"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:minWidth="48dp"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:padding="8dp"
+                android:text="@string/media_permission_manage"
+                android:textColor="@color/glass_text_accent"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </eightbitlab.com.blurview.BlurView>
+
     <eightbitlab.com.blurview.BlurView
         android:id="@+id/titleCard"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
+        android:layout_width="0dp"
+        android:layout_height="52dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="12dp"
         android:background="@drawable/glass_blur_surface_bg"
         android:clipToOutline="true"
         android:elevation="8dp"
         app:blurOverlayColor="@color/main_glass_overlay_strong"
+        app:layout_constraintEnd_toStartOf="@id/sortBtn"
+        app:layout_constraintHorizontal_bias="0"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintWidth_max="132dp">
 
         <ImageView
             android:id="@+id/title"
-            android:layout_width="wrap_content"
-            android:layout_height="59dp"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/video_library_title"
             android:src="@drawable/video_title"
-            android:adjustViewBounds="true"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:scaleType="fitCenter"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
             android:paddingTop="8dp"
             android:paddingBottom="8dp" />
 
@@ -54,6 +126,7 @@
         android:id="@+id/sortBtn"
         android:layout_width="48dp"
         android:layout_height="48dp"
+        android:layout_marginEnd="6dp"
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:contentDescription="@string/sort_videos"
         android:padding="12dp"
@@ -65,9 +138,9 @@
 
     <eightbitlab.com.blurview.BlurView
         android:id="@+id/aboutBtn"
-        android:layout_width="55dp"
-        android:layout_height="55dp"
-        android:layout_marginEnd="16dp"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_marginEnd="24dp"
         android:layout_marginTop="6dp"
         android:background="@drawable/glass_blur_surface_bg"
         android:clipToOutline="true"
@@ -151,20 +224,23 @@
         android:id="@+id/toggleViewBtn"
         android:layout_width="56dp"
         android:layout_height="56dp"
-        android:layout_marginEnd="20dp"
+        android:layout_marginEnd="24dp"
         android:layout_marginBottom="24dp"
         android:background="@drawable/glass_blur_surface_bg"
         android:clipToOutline="true"
+        android:contentDescription="@string/show_folders"
         android:elevation="8dp"
+        android:focusable="true"
         app:blurOverlayColor="@color/main_glass_overlay_strong"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
         <ImageView
             android:id="@+id/toggleIcon"
-            android:layout_width="78dp"
-            android:layout_height="78dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:layout_gravity="center"
+            android:importantForAccessibility="no"
             android:src="@drawable/folder"
             android:scaleType="fitCenter" />
 
@@ -172,8 +248,10 @@
 
     <eightbitlab.com.blurview.BlurView
         android:id="@+id/selectionActionBar"
-        android:layout_width="wrap_content"
-        android:layout_height="64dp"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
         android:layout_marginBottom="24dp"
         android:background="@drawable/glass_blur_surface_bg"
         android:clipToOutline="true"
@@ -182,55 +260,159 @@
         app:blurOverlayColor="@color/main_glass_overlay_strong"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintWidth_max="320dp">
 
         <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
             android:gravity="center"
             android:orientation="horizontal"
             android:paddingStart="8dp"
-            android:paddingEnd="8dp">
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="4dp">
 
-            <ImageButton
+            <LinearLayout
                 android:id="@+id/selectionRename"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
                 android:contentDescription="@string/selection_rename"
-                android:padding="13dp"
-                android:src="@drawable/ic_selection_rename"
-                android:tint="@color/selection_action_icon" />
+                android:focusable="true"
+                android:gravity="center"
+                android:minHeight="64dp"
+                android:minWidth="48dp"
+                android:orientation="vertical"
+                android:padding="8dp">
 
-            <ImageButton
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_selection_rename"
+                    android:tint="@color/selection_action_icon" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:importantForAccessibility="no"
+                    android:text="@string/selection_rename_label"
+                    android:textColor="@color/selection_action_icon"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/selectionShare"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
                 android:contentDescription="@string/selection_share"
-                android:padding="13dp"
-                android:src="@drawable/ic_selection_share"
-                android:tint="@color/glass_text_accent" />
+                android:focusable="true"
+                android:gravity="center"
+                android:minHeight="64dp"
+                android:minWidth="48dp"
+                android:orientation="vertical"
+                android:padding="8dp">
 
-            <ImageButton
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_selection_share"
+                    android:tint="@color/glass_text_accent" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:importantForAccessibility="no"
+                    android:text="@string/selection_share_label"
+                    android:textColor="@color/glass_text_accent"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/selectionDetails"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
                 android:contentDescription="@string/selection_details"
-                android:padding="13dp"
-                android:src="@drawable/ic_selection_details"
-                android:tint="@color/selection_action_icon" />
+                android:focusable="true"
+                android:gravity="center"
+                android:minHeight="64dp"
+                android:minWidth="48dp"
+                android:orientation="vertical"
+                android:padding="8dp">
 
-            <ImageButton
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_selection_details"
+                    android:tint="@color/selection_action_icon" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:importantForAccessibility="no"
+                    android:text="@string/selection_details_label"
+                    android:textColor="@color/selection_action_icon"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/selectionDelete"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
                 android:contentDescription="@string/selection_delete"
-                android:padding="13dp"
-                android:src="@drawable/ic_selection_delete"
-                android:tint="@color/selection_delete_icon" />
+                android:focusable="true"
+                android:gravity="center"
+                android:minHeight="64dp"
+                android:minWidth="48dp"
+                android:orientation="vertical"
+                android:padding="8dp">
+
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_selection_delete"
+                    android:tint="@color/selection_delete_icon" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:importantForAccessibility="no"
+                    android:text="@string/selection_delete_label"
+                    android:textColor="@color/selection_delete_icon"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
 
         </LinearLayout>
 

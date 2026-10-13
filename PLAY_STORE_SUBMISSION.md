@@ -1,6 +1,8 @@
 # CineStream Google Play Submission
 
-Prepared for version **9.6.2** (`versionCode 94`) on September 9, 2026.
+Current local target: **9.7.0** (`versionCode 96`). It is not published. Screen adaptation is mapped in [docs/SCREEN_ADAPTATION.md](docs/SCREEN_ADAPTATION.md). A new signed bundle and current screenshots must be prepared before handing over this version; do not rename or upload an old 9.6.3 bundle as 9.7.0.
+
+The following submission package is the historical **9.6.3** (`versionCode 95`) preparation from October 3, 2026, for the existing `com.exor.cinestream` listing. Its filenames, signatures, artwork, and verification records intentionally retain their original version.
 
 ## App identity
 
@@ -45,11 +47,11 @@ Your videos stay on your device. CineStream performs playback and compatibility 
 
 ### Release name
 
-9.6.2 - Google Play launch
+9.6.3 - Clearer video access and library actions
 
 ### Release notes
 
-Google Play launch under the production package `com.exor.cinestream`. Includes hardware-first local playback, on-device codec recovery, audio and subtitle tracks, gesture controls, playback resume, lifecycle-safe picture-in-picture, and a fix for videos stored directly under Internal storage. Targets Android 16/API 36 and includes a public in-app privacy policy link.
+Video access is clearer: Android asks on first launch, with an explanation and Allow access if you deny. Open settings is offered when needed. On Android 14+, manage the videos you allow. Library actions now include Rename, Share, Info, and Delete labels. Existing playback, audio, subtitles, and picture-in-picture remain available.
 
 ## App content declarations
 
@@ -81,44 +83,43 @@ CineStream is a dedicated local video library and player. Broad video access is 
 ### Reviewer instructions
 
 1. Launch CineStream on a device containing multiple local videos.
-2. Grant video access when Android requests it.
+2. Grant video access when Android requests it on first launch. If denied, use Allow access on the explanation screen; Open settings is offered if Android blocks further prompts.
 3. Confirm the library displays videos and folders with thumbnails, metadata, search, and sorting.
 4. Open a video and verify playback, audio/subtitle controls, resume, and picture-in-picture.
-5. Long-press a video to view the user-initiated share, rename, details, and delete actions.
+5. Long-press a video to view labeled Rename, Share, Info, and Delete actions. Rename and Info require one selected video; Share and Delete support multiple selections.
+6. On Android 14+, optionally choose selected-video access and use Manage access to adjust the available videos.
 
-If Play Console requests a demonstration video for the broad-media declaration, record these five steps on a physical device and provide an accessible YouTube unlisted or cloud-storage link.
+If Play Console requests a demonstration video for the broad-media declaration, record the relevant steps on a physical device and provide an accessible YouTube unlisted or cloud-storage link.
 
 ## Graphic assets
 
-- Play icon: `playstore/graphics/play-icon-512x512.png` — verified 512 x 512 RGBA PNG.
-- Feature graphic: `playstore/graphics/feature-graphic-1024x500.png` — verified 1024 x 500 RGB PNG.
-- Phone screenshots: at least two real screenshots are required. Recommended set: library view, folder view, player controls, audio/subtitle sheet, and picture-in-picture.
+- Play icon: `playstore/updates/9.6.3/graphics/play-icon-512x512.png` — 512 x 512 PNG.
+- Feature graphic: `playstore/updates/9.6.3/graphics/feature-graphic-1024x500.png` — 1024 x 500 PNG.
+- Updated phone screenshots: `playstore/updates/9.6.3/screenshots/01-library.png`, `02-tracks.png`, `03-controls.png`, and `04-privacy.png`. These use real app screens inside presentation artwork. Upload them separately to the listing, in this order, after reviewing their previews.
 - Screenshot format: JPEG or 24-bit PNG without alpha, each side 320-3840 px, and no side more than twice the other side.
 - Preview video: optional. Do not upload copyrighted sample-video footage.
 
 ## Release artifact
 
-Upload `playstore/release/CineStream-9.6.2-play.aab` to a new Play Console app created for `com.exor.cinestream`. Do not upload it to the previous Play Console app record. The bundle includes both supported native ABIs. Google Play generates a reduced device-specific APK, so arm64 devices receive only the arm64-v8a native library rather than the 32-bit library.
+Upload `playstore/updates/9.6.3/CineStream-9.6.3-play.aab` as an update to the existing Play Console app whose package is `com.exor.cinestream`. The package must match that app record. Confirm version code 95 is higher than every version code already uploaded for this app. Google Play generates device-specific APKs from the bundle; phone screenshots are separate listing assets and are not embedded in the AAB.
 
-- Signed AAB size: `19,407,616 bytes` (18.51 MiB)
-- SHA-256: `63255D2FC5074DEC834FBF22EE76858EBB3EEC927184393940701B62A944EB5A`
-- Simulated Android 16 arm64 delivery: `15,383,201 bytes` across generated configuration APKs
-- Bundle contents: `arm64-v8a` and `armeabi-v7a` only; no x86 payload
-- Manifest: min SDK 24, target SDK 36, version code 94
-- Native compatibility: every arm64 shared library uses 16 KiB ELF LOAD alignment
-- Bundle validation and signature verification: passed
+- Package: `com.exor.cinestream`
+- Version: `9.6.3` / `95`
+- Release files, certificate details, and handover steps: `playstore/updates/9.6.3/HANDOVER.md`
+- Exact release sizes and hashes: accompanying `SHA256SUMS.txt` in the handover package
+- This release preparation does not include new physical-device tests; the user handles manual checks.
 
-Rebuild it with `.\gradlew.bat testDebugUnitTest bundleRelease -PplayBundle=true`. The property disables APK-output splitting only for the bundle task; normal release APK builds remain ABI-specific.
+Build with `.\gradlew.bat bundleRelease -PplayBundle=true`, then sign the output with the existing upload key using `jarsigner`. The property disables APK-output splitting only for the bundle task; normal release APK builds remain ABI-specific. This handover includes the signed bundle, not the unsigned Gradle output.
 
-Enable Play App Signing for the new app and enroll the first bundle's CineStream certificate (`SHA1: 65:F6:4C:32:53:06:35:FD:31:9B:93:2B:F9:AC:2A:31:5A:7C:FF:E5`) as its upload key. Never upload the keystore or passwords to Play Console fields, source control, support tickets, or the store listing.
+Confirm the **Upload key certificate** shown under Play app signing matches the bundle certificate (`SHA1: 65:F6:4C:32:53:06:35:FD:31:9B:93:2B:F9:AC:2A:31:5A:7C:FF:E5`). The **App signing key certificate** may legitimately differ; Google uses that key to sign installed Play downloads. Do not assume an earlier upload-key reset has completed. If Console still expects another upload certificate, finish the authorized reset and wait for its activation time before uploading. Never send the keystore or passwords with the update handover.
 
 ## Remaining manual Play Console items
 
 - Complete developer identity and package-name verification if Play Console requests it.
-- Accept Play App Signing terms.
-- Upload at least two genuine phone screenshots.
+- Confirm the existing app's active upload certificate and available version code.
+- Replace the phone screenshot set with the reviewed 9.6.3 artwork; retain the existing icon and feature graphic unless deliberately changing them.
 - Confirm distribution countries/regions and whether the app will be free.
 - Complete the content-rating questionnaire using the answers above.
 - Submit the Photo and Video Permissions declaration after the bundle is uploaded.
 - Start with Internal testing, review Play's automated pre-launch report, then promote when clean.
-- If the publisher is a personal developer account created after November 13, 2023, run the required closed test with at least 12 testers opted in continuously for 14 days, then apply for production access.
+- Follow any testing, account-verification, declaration, or review requirements shown by the publisher's Play Console. Preparing a signed bundle does not guarantee Play approval.

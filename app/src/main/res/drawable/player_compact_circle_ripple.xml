@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/player_control_ripple_tint">
+    <item android:left="4dp" android:top="4dp" android:right="4dp" android:bottom="4dp"
+        android:drawable="@drawable/player_glass_circle"/>
+    <item android:id="@android:id/mask" android:left="4dp" android:top="4dp" android:right="4dp" android:bottom="4dp">
+        <shape android:shape="oval"><solid android:color="@android:color/white"/></shape>
+    </item>
+</ripple>
